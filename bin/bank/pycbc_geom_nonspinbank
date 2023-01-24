@@ -78,11 +78,7 @@ tmpltbank.insert_ethinca_metric_options(parser)
 
 opts = parser.parse_args()
 
-if opts.verbose:
-    log_level = logging.DEBUG
-else:
-    log_level = logging.WARN
-logging.basicConfig(format='%(asctime)s %(message)s', level=log_level)
+pycbc.init_logging(opts.verbose)
 
 opts.max_mismatch = 1 - opts.min_match
 tmpltbank.verify_metric_calculation_options(opts, parser)
