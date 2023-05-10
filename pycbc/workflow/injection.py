@@ -210,24 +210,25 @@ def setup_injection_workflow(workflow, output_dir=None,
     inj_tags = []
     inj_files = FileList([])
 
-    for section in  workflow.cp.get_subsections(inj_section_name):
+    for section in workflow.cp.get_subsections(inj_section_name):
         inj_tag = section.upper()
         curr_tags = tags + [inj_tag]
 
         # Parse for options in ini file
-        injection_method = workflow.cp.get_opt_tags("workflow-injections",
+        injection_method = workflow.cp.get_opt_tags(f"workflow-{inj_section_name}",
                                                     "injections-method",
                                                     curr_tags)
 
         if injection_method in ["IN_WORKFLOW", "AT_RUNTIME"]:
-            exe = select_generic_executable(workflow, 'injections')
+            exe = select_generic_executable(workflow, inj_section_name)
             inj_job = exe(workflow.cp, inj_section_name,
                           out_dir=output_dir, ifos='HL',
                           tags=curr_tags)
             if exe is PycbcCreateInjectionsExecutable:
-                config_urls = workflow.cp.get('workflow-injections',
+                config_urls = workflow.cp.get(f'workflow-{inj_section_name}',
                                               section+'-config-files')
                 config_urls = config_urls.split(',')
+                config_files = resolve_url_to_file(config_url)
                 config_files = FileList([resolve_url_to_file(cf.strip())
                                          for cf in config_urls])
                 node, inj_file = inj_job.create_node(config_files)
@@ -246,12 +247,16 @@ def setup_injection_workflow(workflow, output_dir=None,
                 'tags': curr_tags
             }
             injection_path = workflow.cp.get_opt_tags(
-                "workflow-injections",
+                f"workflow-{inj_section_name}",
                 "injections-pregenerated-file",
                 curr_tags
             )
             curr_file = resolve_url_to_file(injection_path, attrs=file_attrs)
             inj_files.append(curr_file)
+        elif injection_method == "IN_FRAME":
+            # IN_FRAME means that we will supply frames with the appropriate
+            # injections unknown to the analysis
+            inj_files.append(None)
         else:
             err = "Injection method must be one of IN_WORKFLOW, "
             err += "AT_RUNTIME or PREGENERATED. Got %s." % (injection_method)

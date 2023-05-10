@@ -22,6 +22,8 @@ parser.add_argument('--bank-file', required=True)
 parser.add_argument('--single-detector-triggers', nargs='+')
 parser.add_argument('--output-file', required=True)
 parser.add_argument('--num-to-write', type=int)
+parser.add_argument('--table-title', default='Loudest Event Table',
+                    help="Title to use for the table.")
 parser.add_argument('--use-hierarchical-level', type=int,
                     help='Indicate which FARs to write to the table '
                          'based on the number of hierarchical removals done. '
@@ -176,8 +178,8 @@ if args.output_file.endswith('.html'):
     html_table = pycbc.results.html_table(columns, names,
                                    format_strings=format_strings, page_size=10)
 
-    kwds = { 'title' : 'Loudest Event Table',
-        'cmd' :' '.join(sys.argv), }
+    kwds = {'title' : args.table_title,
+            'cmd' :' '.join(sys.argv), }
     pycbc.results.save_fig_with_metadata(
         str(html_table),
         args.output_file,
