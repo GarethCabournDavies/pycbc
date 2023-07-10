@@ -707,8 +707,6 @@ for inj_file, tag in zip(inj_files, inj_tags):
 
         files_for_combined_injfind.append(file_for_injfind)
 
-    print(datafind_files)
-
     # setup the matchedfilter jobs
     if inj_file is None:
         # datafind may be different for unknown injections
@@ -724,7 +722,6 @@ for inj_file, tag in zip(inj_files, inj_tags):
         datafind_files_inj = datafind_files
         analyzable_segs_inj = analyzable_segs
 
-    
     insps = wf.setup_matchedfltr_workflow(
         workflow,
         analyzable_segs_inj,
