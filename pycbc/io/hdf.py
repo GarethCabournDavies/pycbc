@@ -1110,7 +1110,7 @@ class ForegroundTriggers(object):
                      for trig in iter(np.array(ifo_or_minus).T)]
         return ifos_list
 
-    def to_coinc_xml_object(self, file_name, exclusive=False):
+    def to_coinc_xml_object(self, file_name):
         outdoc = ligolw.Document()
         outdoc.appendChild(ligolw.LIGO_LW())
 
@@ -1177,10 +1177,10 @@ class ForegroundTriggers(object):
             bank_col_vals[name] = self.get_bankfile_array(name)
 
         coinc_event_names = ['time', 'stat']
-        if exclusive:
-            coinc_event_names += ['ifar_exc', 'fap_exc']
-        else:
+        if self._inclusive:
             coinc_event_names += ['ifar', 'fap']
+        else:
+            coinc_event_names += ['ifar_exc', 'fap_exc']
         coinc_event_vals = {}
         for name in coinc_event_names:
             if name == 'time':
@@ -1270,16 +1270,16 @@ class ForegroundTriggers(object):
             coinc_inspiral_row.mass = sngl_combined_mtot
             coinc_inspiral_row.end = LIGOTimeGPS(coinc_event_vals['time'][idx])
             coinc_inspiral_row.snr = net_snrsq**0.5
-            if exclusive:
-                coinc_inspiral_row.false_alarm_rate = \
-                    coinc_event_vals['fap_exc'][idx]
-                coinc_inspiral_row.combined_far = \
-                    1./coinc_event_vals['ifar_exc'][idx]
-            else:
+            if self._inclusive:
                 coinc_inspiral_row.false_alarm_rate = \
                     coinc_event_vals['fap'][idx]
                 coinc_inspiral_row.combined_far = \
                     1./coinc_event_vals['ifar'][idx]
+            else:
+                coinc_inspiral_row.false_alarm_rate = \
+                    coinc_event_vals['fap_exc'][idx]
+                coinc_inspiral_row.combined_far = \
+                    1./coinc_event_vals['ifar_exc'][idx]
             # Transform to Hz
             coinc_inspiral_row.combined_far = \
                 conversions.sec_to_year(coinc_inspiral_row.combined_far)
@@ -1306,7 +1306,7 @@ class ForegroundTriggers(object):
         # time will be used later to determine active ifos
         ofd['time'] = time
 
-        if not exclusive:
+        if self._inclusive:
             ofd['ifar'] = self.get_coincfile_array('ifar')
             ofd['p_value'] = self.get_coincfile_array('fap')
 
