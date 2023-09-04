@@ -583,8 +583,8 @@ fore_hdfall = wf.make_foreground_table(workflow, combined_bg_file,
                     hdfbank, rdir['open_box_result'], singles=insps,
                     extension='.hdf', tags=["hdfall"])
 
-main_page = [(ifar_ob,), (fore_table, )]
-symlink_result(fore_table, 'open_box_result/significance')
+main_page = [(ifar_ob,), (table, )]
+symlink_result(table, 'open_box_result/significance')
 #detailed_page = [(snrifar, ratehist), (snrifar_ifar, ifar_ob), (table,)]
 #layout.two_column_layout(rdir['open_box_result/significance'], detailed_page)
 
