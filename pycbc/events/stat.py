@@ -26,8 +26,10 @@ This module contains functions for calculating coincident ranking statistic
 values.
 """
 import logging
+import os
 import numpy
 import h5py
+
 from . import ranking
 from . import coinc_rate
 from .eventmgr_cython import logsignalrateinternals_computepsignalbins
@@ -57,6 +59,9 @@ class Stat(object):
         """
 
         self.files = {}
+        # Keep track of when stat files last modified so it can be
+        # reloaded if it has changed
+        self.file_mtimes = {}
         files = files or []
         for filename in files:
             with h5py.File(filename, 'r') as f:
@@ -68,6 +73,7 @@ class Stat(object):
                                    " %s. Can't provide more than one!" % stat)
             logger.info("Found file %s for stat %s", filename, stat)
             self.files[stat] = filename
+            self.file_mtimes[stat] = os.path.getmtime(filename)
 
         # Provide the dtype of the single detector method's output
         # This is used by background estimation codes that need to maintain
@@ -185,6 +191,25 @@ class Stat(object):
         err_msg = "This function is a stub that should be overridden by the "
         err_msg += "sub-classes. You shouldn't be seeing this error!"
         raise NotImplementedError(err_msg)
+
+    def check_files_updated(self):
+        """
+        Check whether the files used in the statistic have been uploaded.
+        Return a list of the files which need updating
+        """
+        for k, v in list(self.file_mtimes.items()):
+            # Get most recent modified time
+            mtime_new = os.path.getmtime(self.files[k])
+            # Check if the file has been modified since it was last loaded
+            if not mtime_new == v:
+                # If it has been modified, update it
+                if self.update_file(k):
+                    logger.info(
+                        "Updated %s statistic's %s stat file %s",
+                        ''.join(self.ifos),
+                        k,
+                        self.files[k]
+                    )
 
 
 class QuadratureSumStatistic(Stat):
@@ -382,6 +407,10 @@ class PhaseTDStatistic(QuadratureSumStatistic):
 
         if selected is None and len(ifos) > 1:
             raise RuntimeError("Couldn't figure out which stat file to use")
+        elif len(ifos) == 1:
+            # We dont need the histogram file, but we are trying to get one
+            # just skip it in this case
+            return
 
         logger.info("Using signal histogram %s for ifos %s", selected, ifos)
         weights = {}
@@ -494,6 +523,20 @@ class PhaseTDStatistic(QuadratureSumStatistic):
             self.relsense[ifo] = sense
 
         self.has_hist = True
+
+    def update_file(self, key):
+        """
+        Update file used in this statistic.
+        If others are used (i.e. this statistic is inherited), they will
+        need updated separately
+        """
+        if 'phasetd_newsnr' in key and not len(self.ifos) == 1:
+            if ''.join(sorted(self.ifos)) not in key:
+                return False
+            # This is a PhaseTDStatistic file which needs updating
+            self.get_hist()
+            self.file_mtimes[key] = os.path.getmtime(self.files[key])
+            return True
 
     def logsignalrate(self, stats, shift, to_shift):
         """
@@ -752,9 +795,11 @@ class ExpFitStatistic(QuadratureSumStatistic):
         parsed_attrs = [f.split('-') for f in self.files.keys()]
         self.bg_ifos = [at[0] for at in parsed_attrs if
                        (len(at) == 2 and at[1] == 'fit_coeffs')]
+
         if not len(self.bg_ifos):
             raise RuntimeError("None of the statistic files has the required "
                                "attribute called {ifo}-fit_coeffs !")
+
         self.fits_by_tid = {}
         self.alphamax = {}
         for i in self.bg_ifos:
@@ -808,6 +853,20 @@ class ExpFitStatistic(QuadratureSumStatistic):
         coeff_file.close()
 
         return fits_by_tid_dict
+
+    def update_file(self, key):
+        """
+        Update file used in this statistic.
+        If others are used (i.e. this statistic is inherited), they will
+        need updated separately
+        """
+        if key.endswith('-fit_coeffs'):
+            # This is a ExpFitStatistic file which needs updating
+            # Which ifo is it?
+            ifo = key[:2]
+            self.assign_fits(ifo)
+            self.file_mtimes[key] = os.path.getmtime(self.files[key])
+            return True
 
     def get_ref_vals(self, ifo):
         """
@@ -1151,6 +1210,18 @@ class PhaseTDExpFitStatistic(PhaseTDStatistic, ExpFitCombinedSNR):
         PhaseTDStatistic.__init__(self, sngl_ranking, files=files,
                                   ifos=ifos, **kwargs)
 
+    def update_file(self, key):
+        """
+        Update file used in this statistic.
+        If others are used (i.e. this statistic is inherited), they will
+        need updated separately
+        """
+        # Here we inherit the PhaseTD and ExpFit file checks,
+        # nothing else needs doing
+        uf_exp_fit = ExpFitCombinedSNR.update_file(self, key)
+        uf_phasetd = PhaseTDStatistic.update_file(self, key)
+        return uf_exp_fit or uf_phasetd
+
     def single(self, trigs):
         """
         Calculate the necessary single detector information
@@ -1299,6 +1370,23 @@ class ExpFitBgRateStatistic(ExpFitStatistic):
             self.fits_by_tid[ifo]['fit_by_rate_above_thresh'] /= analysis_time
             self.fits_by_tid[ifo]['fit_by_rate_in_template'] /= analysis_time
 
+    def update_file(self, key):
+        """
+        Update file used in this statistic.
+        If others are used (i.e. this statistic is inherited), they will
+        need updated separately
+        """
+        # Check if the file to update is an ExpFit file
+        uf_expfit = ExpFitStatistic.update_file(self, key)
+        # If this has been updated we must do the reassign_rate step here
+        # on top of the file update from earlier
+        if uf_expfit:
+            # This is a fit coeff file which needs updating
+            # Which ifo is it?
+            ifo = key[:2]
+            self.reassign_rate(ifo)
+            return True
+
     def rank_stat_coinc(self, s, slide, step, to_shift,
                         **kwargs): # pylint:disable=unused-argument
         """
@@ -1399,12 +1487,9 @@ class ExpFitFgBgNormStatistic(PhaseTDStatistic,
         for ifo in self.bg_ifos:
             self.assign_median_sigma(ifo)
 
-        ref_ifos = reference_ifos.split(',')
+        self.ref_ifos = reference_ifos.split(',')
+        self.assign_benchmark_logvol()
 
-        # benchmark_logvol is a benchmark sensitivity array over template id
-        hl_net_med_sigma = numpy.amin([self.fits_by_tid[ifo]['median_sigma']
-                                       for ifo in ref_ifos], axis=0)
-        self.benchmark_logvol = 3. * numpy.log(hl_net_med_sigma)
         self.single_increasing = False
         # Initialize variable to hold event template id(s)
         self.curr_tnum = None
@@ -1424,6 +1509,39 @@ class ExpFitFgBgNormStatistic(PhaseTDStatistic,
             tid_sort = numpy.argsort(template_id)
             self.fits_by_tid[ifo]['median_sigma'] = \
                 coeff_file['median_sigma'][:][tid_sort]
+
+    def assign_benchmark_logvol(self):
+        """Assign the benchmark log-volume used by the statistic.
+        This is the sensitive log-volume of each template in the
+        network of reference IFOs
+        """
+        bench_net_med_sigma = numpy.amin(
+            [self.fits_by_tid[ifo]['median_sigma'] for ifo in self.ref_ifos]
+            , axis=0
+        )
+        self.benchmark_logvol = 3. * numpy.log(bench_net_med_sigma)
+
+    def update_file(self, key):
+        """
+        Update file used in this statistic.
+        If others are used (i.e. this statistic is inherited), they will
+        need updated separately
+        """
+        # Here we inherit the PhaseTD file checks
+        uf_phasetd = PhaseTDStatistic.update_file(self, key)
+        uf_exp_fit = ExpFitBgRateStatistic.update_file(self, key)
+        if uf_phasetd:
+            # The key to update refers to a PhaseTDStatistic file
+            return True
+        if uf_exp_fit:
+            # The key to update refers to a ExpFitBgRateStatistic file
+            # In this case we must reload some statistic information
+            # Which ifo is it?
+            ifo = key[:2]
+            self.assign_median_sigma(ifo)
+            self.assign_benchmark_logvol()
+            return True
+
 
     def lognoiserate(self, trigs, alphabelow=6):
         """
@@ -1934,6 +2052,24 @@ class ExpFitFgBgKDEStatistic(ExpFitFgBgNormStatistic):
         with h5py.File(self.files[kname + '-kde_file'], 'r') as kde_file:
             self.kde_by_tid[kname + '_kdevals'] = kde_file['data_kde'][:]
 
+    def update_file(self, key):
+        """
+        Update file used in this statistic.
+        If others are used (i.e. this statistic is inherited), they will
+        need updated separately
+        """
+        # Inherit from ExpFitFgBgNormStatistic
+        uf_expfit = ExpFitFgBgNormStatistic.update_file(self, key)
+        if uf_expfit:
+            # The key to update refers to a ExpFitFgBgNormStatistic file
+            return True
+        # Is the key a KDE statistic file that we update here?
+        if key.endswith('kde_file'):
+            kde_style = key.split('-')[0]
+            self.assign_kdes(kde_style)
+            self.file_mtimes[key] = os.path.getmtime(self.files[key])
+            return True
+
     def kde_ratio(self):
         """
         Calculate the weighting factor according to the ratio of the
@@ -2137,6 +2273,25 @@ class DQExpFitFgBgNormStatistic(ExpFitFgBgNormStatistic):
 
         return dq_state_segs_dict
 
+    def update_file(self, key):
+        """
+        Update file used in this statistic.
+        If others are used (i.e. this statistic is inherited), they will
+        need updated separately
+        """
+        # Inherit from ExpFitFgBgNormStatistic
+        uf_expfit = ExpFitFgBgNormStatistic.update_file(self, key)
+        if uf_expfit:
+            # We have updated a ExpFitFgBgNormStatistic file already
+            return True
+        # We also need to check if the DQ files have updated
+        if key.endswith('dq_stat_info'):
+            self.assign_dq_rates(key)
+            self.assign_template_bins(key)
+            self.setup_segments(key)
+            self.file_mtimes[key] = os.path.getmtime(self.files[key])
+            return True
+
     def find_dq_noise_rate(self, trigs, dq_state):
         """Get dq values for a specific ifo and dq states"""
 
@@ -2196,7 +2351,6 @@ class DQExpFitFgBgNormStatistic(ExpFitFgBgNormStatistic):
         """
 
         # make sure every trig has a dq state
-
         try:
             ifo = trigs.ifo
         except AttributeError:
@@ -2209,7 +2363,7 @@ class DQExpFitFgBgNormStatistic(ExpFitFgBgNormStatistic):
         dq_rate = self.find_dq_noise_rate(trigs, dq_state)
         dq_rate = numpy.maximum(dq_rate, 1)
 
-        logr_n = ExpFitFgBgNormStatistic.lognoiserate(
+        logr_n = dq_stat_infoExpFitFgBgNormStatistic.lognoiserate(
                     self, trigs)
         logr_n += numpy.log(dq_rate)
         return logr_n
@@ -2244,6 +2398,17 @@ class DQExpFitFgBgKDEStatistic(DQExpFitFgBgNormStatistic):
         self.kde_by_tid = {}
         for kname in self.kde_names:
             ExpFitFgBgKDEStatistic.assign_kdes(self, kname)
+
+    def update_file(self, key):
+        """
+        Update file used in this statistic.
+        If others are used (i.e. this statistic is inherited), they will
+        need updated separately
+        """
+        # Inherit from DQExpFitFgBgNormStatistic and ExpFitFgBgKDEStatistic
+        uf_dq = DQExpFitFgBgNormStatistic.update_file(self, key)
+        uf_kde = ExpFitFgBgKDEStatistic.update_file(self, key)
+        return uf_dq or uf_kde
 
     def kde_ratio(self):
         """

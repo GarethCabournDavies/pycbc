@@ -4,6 +4,9 @@ import logging
 import copy
 import h5py
 import numpy as np
+from datetime import datetime as dt
+import time
+from multiprocessing.dummy import threading
 
 from pycbc.events import trigger_fits as fits, stat
 from pycbc.types import MultiDetOptionAction
@@ -25,6 +28,7 @@ class LiveSingle(object):
                  statistic=None,
                  sngl_ranking=None,
                  stat_files=None,
+                 statistic_refresh_rate=None,
                  **kwargs):
         self.ifo = ifo
         self.fit_file = fit_file
@@ -39,6 +43,18 @@ class LiveSingle(object):
             ifos=[ifo],
             **kwargs
         )
+
+        # Values to control how often the statistic is refreshed
+        self.time_stat_refreshed = dt.now()
+        self.statistic_refresh_rate = statistic_refresh_rate
+
+        # Start a thread which checks/updates the statistic files
+        if self.statistic_refresh_rate is not None:
+            refresh_stat_thread = threading.Thread(
+                target=self.refresh_statistic,
+                daemon=True,
+            )
+            refresh_stat_thread.start()
 
         self.thresholds = {
             "newsnr": newsnr_threshold,
@@ -187,6 +203,7 @@ class LiveSingle(object):
            statistic=args.ranking_statistic,
            sngl_ranking=args.sngl_ranking,
            stat_files=stat_files,
+           statistic_refresh_rate=args.statistic_refresh_rate,
            **kwargs
            )
 
@@ -302,3 +319,26 @@ class LiveSingle(object):
         rate_louder *= len(rates)
 
         return min(conv.sec_to_year(1. / rate_louder), self.maximum_ifar)
+    
+    def refresh_statistic(self):
+        # check if the statistic needs updating
+        logger.info("Starting %s statistic refresh thread", self.ifo)
+        while True:
+            since_stat_refresh = (dt.now() - self.time_stat_refreshed).seconds
+            if since_stat_refresh > self.statistic_refresh_rate:
+                logger.info(
+                    "Checking if %s single statistic needs updated",
+                    self.ifo
+                )
+                self.stat_calculator.check_files_updated()
+                self.time_stat_refreshed = dt.now()
+            else:
+                logger.debug(
+                    "Refresh thread sleeping %.3f until next refresh check",
+                    self.statistic_refresh_rate - since_stat_refresh
+                )
+                # Add one second for safety
+                time.sleep(
+                    self.statistic_refresh_rate - since_stat_refresh + 1
+                )
+

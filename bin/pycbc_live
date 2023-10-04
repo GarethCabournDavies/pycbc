@@ -1413,3 +1413,5 @@ if evnt.rank == 1:
 
 if args.enable_profiling is not None and evnt.rank == args.enable_profiling:
     pr.dump_stats(f'profiling_rank_{evnt.rank:03d}')
+
+logging.info("Exiting as the end time has been reached")

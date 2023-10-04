@@ -26,8 +26,13 @@ coincident triggers.
 """
 
 import numpy, logging, pycbc.pnutils, pycbc.conversions, copy, lal
+from datetime import datetime as dt
+import time
+from multiprocessing.dummy import threading
+
 from pycbc.detector import Detector, ppdets
 from pycbc.conversions import mchirp_from_mass1_mass2
+
 from .eventmgr_cython import coincbuffer_expireelements
 from .eventmgr_cython import coincbuffer_numgreater
 from .eventmgr_cython import timecoincidence_constructidxs
@@ -824,6 +829,7 @@ class LiveCoincTimeslideBackgroundEstimator(object):
                  ifar_limit=100,
                  timeslide_interval=.035,
                  coinc_window_pad=.002,
+                 statistic_refresh_rate=None,
                  return_background=False,
                  **kwargs):
         """
@@ -851,6 +857,9 @@ class LiveCoincTimeslideBackgroundEstimator(object):
         coinc_window_pad: float
             Amount of time allowed to form a coincidence in addition to the
             time of flight in seconds.
+        statistic_refresh_rate: float
+            How regularly to run the update_files method on the statistic
+            class (in seconds), default not do do this
         return_background: boolean
             If true, background triggers will also be included in the file
             output.
@@ -892,6 +901,19 @@ class LiveCoincTimeslideBackgroundEstimator(object):
         # temporary array used in `_find_coincs()` to turn `trig_stat`
         # into an array much faster than using `numpy.resize()`
         self.trig_stat_memory = None
+
+        # Values to control how often the statistic is refreshed
+        self.time_stat_refreshed = dt.now()
+        self.statistic_refresh_rate = statistic_refresh_rate
+
+        # Start a thread which checks/updates the statistic files
+        if self.statistic_refresh_rate is not None:
+            refresh_stat_thread = threading.Thread(
+                target=self.refresh_statistic,
+                daemon=True,
+            )
+            refresh_stat_thread.start()
+
 
     @classmethod
     def pick_best_coinc(cls, coinc_results):
@@ -969,6 +991,7 @@ class LiveCoincTimeslideBackgroundEstimator(object):
                    ifar_limit=args.background_ifar_limit,
                    timeslide_interval=args.timeslide_interval,
                    ifos=ifos,
+                   statistic_refresh_rate=args.statistic_refresh_rate,
                    coinc_window_pad=args.coinc_window_pad,
                    **kwargs)
 
@@ -988,6 +1011,9 @@ class LiveCoincTimeslideBackgroundEstimator(object):
             help="The interval between timeslides in seconds", default=0.1)
         group.add_argument('--ifar-remove-threshold', type=float,
             help="NOT YET IMPLEMENTED", default=100.0)
+        group.add_argument('--statistic-refresh-rate', type=float,
+            help="How regularly to check whether the statistic files "
+                 "have been modified, seconds. Default=do not refresh")
 
     @staticmethod
     def verify_args(args, parser):
@@ -1372,6 +1398,7 @@ class LiveCoincTimeslideBackgroundEstimator(object):
         # Add single triggers to the internal buffer
         self._add_singles_to_buffer(results, ifos=valid_ifos)
 
+
         # Calculate zerolag and background coincidences
         _, coinc_results = self._find_coincs(results, valid_ifos=valid_ifos)
 
@@ -1381,6 +1408,27 @@ class LiveCoincTimeslideBackgroundEstimator(object):
 
         return coinc_results
 
+    def refresh_statistic(self):
+        # check if the statistic needs updating
+        logger.info("Starting %s statistic refresh thread", ''.join(self.ifos))
+        while True:
+            since_stat_refresh = (dt.now() - self.time_stat_refreshed).seconds
+            if since_stat_refresh > self.statistic_refresh_rate:
+                logger.info(
+                    "Checking if %s coinc statistic needs updated",
+                    ''.join(self.ifos)
+                )
+                self.stat_calculator.check_files_updated()
+                self.time_stat_refreshed = dt.now()
+            else:
+                logger.debug(
+                    "Refresh thread sleeping %.3f until next refresh check",
+                    self.statistic_refresh_rate - since_stat_refresh
+                )
+                # Add one second for safety
+                time.sleep(
+                    self.statistic_refresh_rate - since_stat_refresh + 1
+                )
 
 __all__ = [
     "background_bin_from_string",
