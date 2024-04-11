@@ -2363,7 +2363,7 @@ class DQExpFitFgBgNormStatistic(ExpFitFgBgNormStatistic):
         dq_rate = self.find_dq_noise_rate(trigs, dq_state)
         dq_rate = numpy.maximum(dq_rate, 1)
 
-        logr_n = dq_stat_infoExpFitFgBgNormStatistic.lognoiserate(
+        logr_n = ExpFitFgBgNormStatistic.lognoiserate(
                     self, trigs)
         logr_n += numpy.log(dq_rate)
         return logr_n
