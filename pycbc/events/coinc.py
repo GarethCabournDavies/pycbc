@@ -1402,7 +1402,7 @@ class LiveCoincTimeslideBackgroundEstimator(object):
 
         with self.lock:
             # The statistic has been updated by the update thread
-            logging.warning("Main Class: my_variable value is %d", self.my_variable)
+            logging.warning("%s Main Class: my_variable value is %d", ''.join(self.ifos), self.my_variable)
 
             # Add single triggers to the internal buffer
             self._add_singles_to_buffer(results, ifos=valid_ifos)

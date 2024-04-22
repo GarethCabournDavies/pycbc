@@ -1156,8 +1156,8 @@ with ctx:
     if analyze_singles and evnt.rank == 0:
         sngl_estimator = {ifo: LiveSingle.from_cli(args, ifo)
                           for ifo in evnt.trigg_ifos}
-        #for v in sngl_estimator.values:
-        #    v.start_refresh_thread()
+        for estim in sngl_estimator.values():
+            estim.start_refresh_thread()
 
     # Create double coincident background estimator
     # for every pair of triggering interferometers

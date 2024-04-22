@@ -3,6 +3,9 @@
 import logging
 import copy
 import h5py
+import threading
+from datetime import datetime as dt
+import time
 import numpy as np
 from datetime import datetime as dt
 import time
@@ -35,6 +38,11 @@ class LiveSingle(object):
         self.sngl_ifar_est_dist = sngl_ifar_est_dist
         self.fixed_ifar = fixed_ifar
         self.maximum_ifar = maximum_ifar
+
+        self.time_stat_refreshed = dt.now()
+        self.my_variable = 0
+        self.lock = threading.Lock()
+        self.statistic_refresh_rate = statistic_refresh_rate
 
         stat_class = stat.get_statistic(statistic)
         self.stat_calculator = stat_class(
@@ -224,6 +232,9 @@ class LiveSingle(object):
             trig_chisq = trigs['chisq']
             trig_snr = trigs['snr']
 
+        with self.lock:
+            # The statistic has been updated by the update thread
+            logging.warning("%s Main Class: my_variable value is %d", self.ifo, self.my_variable)
         valid_idx = (trigs['template_duration'] >
                      self.thresholds['duration']) & \
                     (trig_chisq <
@@ -243,7 +254,9 @@ class LiveSingle(object):
         trigsc['chisq_dof'] = (cut_trigs['chisq_dof'] + 2) / 2
 
         # Calculate the ranking reweighted SNR for cutting
-        single_rank = self.stat_calculator.get_sngl_ranking(trigsc)
+        with self.lock:
+            single_rank = self.stat_calculator.get_sngl_ranking(trigsc)
+
         sngl_idx = single_rank > self.thresholds['newsnr']
         if not np.any(sngl_idx):
             return None
@@ -252,8 +265,9 @@ class LiveSingle(object):
                         for k in trigs}
 
         # Calculate the ranking statistic
-        sngl_stat = self.stat_calculator.single(cutall_trigs)
-        rank = self.stat_calculator.rank_stat_single((self.ifo, sngl_stat))
+        with self.lock:
+            sngl_stat = self.stat_calculator.single(cutall_trigs)
+            rank = self.stat_calculator.rank_stat_single((self.ifo, sngl_stat))
 
         # 'cluster' by taking the maximal statistic value over the trigger set
         i = rank.argmax()
@@ -319,26 +333,31 @@ class LiveSingle(object):
         rate_louder *= len(rates)
 
         return min(conv.sec_to_year(1. / rate_louder), self.maximum_ifar)
-    
-    def refresh_statistic(self):
-        # check if the statistic needs updating
-        logger.info("Starting %s statistic refresh thread", self.ifo)
+
+    def start_refresh_thread(self):
+        """
+        Start a thread managing whether the stat_calculaior will be updated
+        """
+        thread = threading.Thread(target=self.update_statistic, daemon=True)
+        thread.start()
+
+    def update_statistic(self):
+        """
+        Function to update the stat_calculator if the file hashes have changed
+        """
         while True:
             since_stat_refresh = (dt.now() - self.time_stat_refreshed).seconds
             if since_stat_refresh > self.statistic_refresh_rate:
-                logger.info(
-                    "Checking if %s single statistic needs updated",
-                    self.ifo
+                logger.warning(
+                    "Updating %s statistic",
+                    self.ifo,
                 )
-                self.stat_calculator.check_files_updated()
+                with self.lock:
+                    self.my_variable += 1
                 self.time_stat_refreshed = dt.now()
             else:
-                logger.debug(
-                    "Refresh thread sleeping %.3f until next refresh check",
+                logger.warning(
+                    "Waiting %.3fs for next refresh",
                     self.statistic_refresh_rate - since_stat_refresh
                 )
-                # Add one second for safety
-                time.sleep(
-                    self.statistic_refresh_rate - since_stat_refresh + 1
-                )
-
+                time.sleep(self.statistic_refresh_rate - since_stat_refresh + 1)
