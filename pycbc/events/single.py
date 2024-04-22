@@ -40,7 +40,6 @@ class LiveSingle(object):
         self.maximum_ifar = maximum_ifar
 
         self.time_stat_refreshed = dt.now()
-        self.my_variable = 0
         self.lock = threading.Lock()
         self.statistic_refresh_rate = statistic_refresh_rate
 
@@ -232,9 +231,6 @@ class LiveSingle(object):
             trig_chisq = trigs['chisq']
             trig_snr = trigs['snr']
 
-        with self.lock:
-            # The statistic has been updated by the update thread
-            logging.warning("%s Main Class: my_variable value is %d", self.ifo, self.my_variable)
         valid_idx = (trigs['template_duration'] >
                      self.thresholds['duration']) & \
                     (trig_chisq <
@@ -348,16 +344,17 @@ class LiveSingle(object):
         while True:
             since_stat_refresh = (dt.now() - self.time_stat_refreshed).seconds
             if since_stat_refresh > self.statistic_refresh_rate:
-                logger.warning(
-                    "Updating %s statistic",
-                    self.ifo,
+                logger.info(
+                    "Checking %s statistic for updated files",
+                    self.ifo
                 )
                 with self.lock:
-                    self.my_variable += 1
+                    self.stat_calculator.check_update_files()
                 self.time_stat_refreshed = dt.now()
             else:
-                logger.warning(
-                    "Waiting %.3fs for next refresh",
+                logger.debug(
+                    "%s statistic: Waiting %.3fs for next refresh",
+                    self.ifo,
                     self.statistic_refresh_rate - since_stat_refresh
                 )
                 time.sleep(self.statistic_refresh_rate - since_stat_refresh + 1)

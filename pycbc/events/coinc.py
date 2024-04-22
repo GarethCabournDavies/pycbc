@@ -881,7 +881,6 @@ class LiveCoincTimeslideBackgroundEstimator(object):
         )
 
         self.time_stat_refreshed = dt.now()
-        self.my_variable = 0
         self.lock = threading.Lock()
         self.statistic_refresh_rate = statistic_refresh_rate
 
@@ -1401,9 +1400,6 @@ class LiveCoincTimeslideBackgroundEstimator(object):
         if len(valid_ifos) == 0: return {}
 
         with self.lock:
-            # The statistic has been updated by the update thread
-            logging.warning("%s Main Class: my_variable value is %d", ''.join(self.ifos), self.my_variable)
-
             # Add single triggers to the internal buffer
             self._add_singles_to_buffer(results, ifos=valid_ifos)
 
@@ -1430,16 +1426,17 @@ class LiveCoincTimeslideBackgroundEstimator(object):
         while True:
             since_stat_refresh = (dt.now() - self.time_stat_refreshed).seconds
             if since_stat_refresh > self.statistic_refresh_rate:
-                logger.warning(
-                    "Updating %s statistic",
-                    "".join(self.ifos),
+                logger.info(
+                    "Checking %s statistic for updated files",
+                    ''.join(self.ifos)
                 )
                 with self.lock:
-                    self.my_variable += 1
+                    self.stat_calculator.check_update_files()
                 self.time_stat_refreshed = dt.now()
             else:
-                logger.warning(
-                    "Waiting %.3fs for next refresh",
+                logger.debug(
+                    "%s statistic: Waiting %.3fs for next refresh",
+                    ''.join(self.ifos),
                     self.statistic_refresh_rate - since_stat_refresh
                 )
                 time.sleep(self.statistic_refresh_rate - since_stat_refresh + 1)
