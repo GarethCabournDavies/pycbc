@@ -29,6 +29,9 @@ import logging
 import os
 import numpy
 import h5py
+import os
+from hashlib import sha1
+from datetime import datetime as dt
 
 from . import ranking
 from . import coinc_rate
@@ -36,7 +39,6 @@ from .eventmgr_cython import logsignalrateinternals_computepsignalbins
 from .eventmgr_cython import logsignalrateinternals_compute2detrate
 
 logger = logging.getLogger('pycbc.events.stat')
-
 
 class Stat(object):
     """Base class which should be extended to provide a coincident statistic"""
@@ -73,7 +75,7 @@ class Stat(object):
                                    " %s. Can't provide more than one!" % stat)
             logger.info("Found file %s for stat %s", filename, stat)
             self.files[stat] = filename
-            self.file_mtimes[stat] = os.path.getmtime(filename)
+        self.file_hashes = self.get_file_hashes()
 
         # Provide the dtype of the single detector method's output
         # This is used by background estimation codes that need to maintain
@@ -90,6 +92,61 @@ class Stat(object):
         for key, value in kwargs.items():
             if key.startswith('sngl_ranking_'):
                 self.sngl_ranking_kwargs[key[13:]] = value
+
+    def get_file_hashes(self):
+        """
+        Get sha1 hashes for all the files
+        """
+        logger.info(
+            "Getting file hashes"
+        )
+        start = dt.now()
+        file_hashes = {}
+        for stat, filename in self.files.items():
+            with open(filename, 'rb') as file_binary:
+                file_hashes[stat] = sha1(file_binary.read()).hexdigest()
+        logger.debug(
+            "Got file hashes for %d files, took %.3es",
+            len(self.files),
+            (dt.now() - start).total_seconds()
+        )
+        return file_hashes
+
+    def files_changed(self):
+        """
+        Compare sha1 hashes of files now with the ones on file
+        """
+        changed_file_hashes = self.get_file_hashes()
+        for stat, old_hash in self.file_hashes.items():
+            if changed_file_hashes[stat] != old_hash:
+                logger.info(
+                    "%s statistic file %s has changed",
+                    ''.join(self.ifos),
+                    stat,
+                )
+            else:
+                del changed_file_hashes[stat]
+        else:
+            logger.info("No files have changed")
+        return list(changed_file_hashes.keys())
+
+    def check_update_files(self):
+        """
+        Check whether files associated with the statistic need updated,
+        then do so for each file which needs changing
+        """
+        files_changed = self.files_changed()
+        for file_key in files_changed:
+            self.update_file(file_key)
+        self.file_hashes = self.get_file_hashes()
+
+    def update_file(self, key):
+        """
+        Update file used in this statistic reference by key.
+        """
+        err_msg = "This function is a stub that should be overridden by the "
+        err_msg += "sub-classes. You shouldn't be seeing this error!"
+        raise NotImplementedError(err_msg)
 
     def get_sngl_ranking(self, trigs):
         """
@@ -532,10 +589,19 @@ class PhaseTDStatistic(QuadratureSumStatistic):
         """
         if 'phasetd_newsnr' in key and not len(self.ifos) == 1:
             if ''.join(sorted(self.ifos)) not in key:
+                logger.debug(
+                    "%s file is not used for %s statistic",
+                    key,
+                    ''.join(self.ifos)
+                )
                 return False
+            logger.info(
+                "Updating %s statistic %s file",
+                ''.join(self.ifos),
+                key
+            )
             # This is a PhaseTDStatistic file which needs updating
             self.get_hist()
-            self.file_mtimes[key] = os.path.getmtime(self.files[key])
             return True
 
     def logsignalrate(self, stats, shift, to_shift):
@@ -864,8 +930,13 @@ class ExpFitStatistic(QuadratureSumStatistic):
             # This is a ExpFitStatistic file which needs updating
             # Which ifo is it?
             ifo = key[:2]
-            self.assign_fits(ifo)
-            self.file_mtimes[key] = os.path.getmtime(self.files[key])
+            self.fits_by_tid[ifo] = self.assign_fits(ifo)
+            self.get_ref_vals(ifo)
+            logger.info(
+                "Updating %s statistic %s file",
+                ''.join(self.ifos),
+                key
+            )
             return True
 
     def get_ref_vals(self, ifo):
@@ -1488,8 +1559,8 @@ class ExpFitFgBgNormStatistic(PhaseTDStatistic,
             self.assign_median_sigma(ifo)
 
         self.ref_ifos = reference_ifos.split(',')
+        self.benchmark_logvol = None
         self.assign_benchmark_logvol()
-
         self.single_increasing = False
         # Initialize variable to hold event template id(s)
         self.curr_tnum = None
@@ -1511,13 +1582,15 @@ class ExpFitFgBgNormStatistic(PhaseTDStatistic,
                 coeff_file['median_sigma'][:][tid_sort]
 
     def assign_benchmark_logvol(self):
-        """Assign the benchmark log-volume used by the statistic.
+        """
+        Assign the benchmark log-volume used by the statistic.
         This is the sensitive log-volume of each template in the
         network of reference IFOs
         """
+        # benchmark_logvol is a benchmark sensitivity array over template id
         bench_net_med_sigma = numpy.amin(
-            [self.fits_by_tid[ifo]['median_sigma'] for ifo in self.ref_ifos]
-            , axis=0
+            [self.fits_by_tid[ifo]['median_sigma'] for ifo in self.ref_ifos],
+            axis=0,
         )
         self.benchmark_logvol = 3. * numpy.log(bench_net_med_sigma)
 
@@ -1541,7 +1614,6 @@ class ExpFitFgBgNormStatistic(PhaseTDStatistic,
             self.assign_median_sigma(ifo)
             self.assign_benchmark_logvol()
             return True
-
 
     def lognoiserate(self, trigs, alphabelow=6):
         """
@@ -1673,7 +1745,6 @@ class ExpFitFgBgNormStatistic(PhaseTDStatistic,
             ln_noise_rate = coinc_rate.combination_noise_lograte(
                                     sngl_rates, kwargs['time_addition'],
                                     kwargs['dets'])
-                                    
             # Extent of time-difference space occupied
             noise_twindow = coinc_rate.multiifo_noise_coincident_area(
                                 self.hist_ifos, kwargs['time_addition'],
@@ -2065,9 +2136,13 @@ class ExpFitFgBgKDEStatistic(ExpFitFgBgNormStatistic):
             return True
         # Is the key a KDE statistic file that we update here?
         if key.endswith('kde_file'):
+            logger.info(
+                "Updating %s statistic %s file",
+                ''.join(self.ifos),
+                key
+            )
             kde_style = key.split('-')[0]
             self.assign_kdes(kde_style)
-            self.file_mtimes[key] = os.path.getmtime(self.files[key])
             return True
 
     def kde_ratio(self):
@@ -2286,10 +2361,14 @@ class DQExpFitFgBgNormStatistic(ExpFitFgBgNormStatistic):
             return True
         # We also need to check if the DQ files have updated
         if key.endswith('dq_stat_info'):
+            logger.info(
+                "Updating %s statistic %s file",
+                ''.join(self.ifos),
+                key
+            )
             self.assign_dq_rates(key)
             self.assign_template_bins(key)
             self.setup_segments(key)
-            self.file_mtimes[key] = os.path.getmtime(self.files[key])
             return True
 
     def find_dq_noise_rate(self, trigs, dq_state):
