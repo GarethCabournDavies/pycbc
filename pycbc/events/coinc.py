@@ -26,13 +26,14 @@ coincident triggers.
 """
 
 import numpy, logging, pycbc.pnutils, pycbc.conversions, copy, lal
-from datetime import datetime as dt
 import time
-from multiprocessing.dummy import threading
+from datetime import datetime as dt
+import threading
 
 from pycbc.detector import Detector, ppdets
 from pycbc.conversions import mchirp_from_mass1_mass2
 
+from . import stat as pycbcstat
 from .eventmgr_cython import coincbuffer_expireelements
 from .eventmgr_cython import coincbuffer_numgreater
 from .eventmgr_cython import timecoincidence_constructidxs
@@ -831,6 +832,7 @@ class LiveCoincTimeslideBackgroundEstimator(object):
                  coinc_window_pad=.002,
                  statistic_refresh_rate=None,
                  return_background=False,
+                 statistic_refresh_rate=None,
                  **kwargs):
         """
         Parameters
@@ -867,17 +869,21 @@ class LiveCoincTimeslideBackgroundEstimator(object):
             Additional options for the statistic to use. See stat.py
             for more details on statistic options.
         """
-        from . import stat
         self.num_templates = num_templates
         self.analysis_block = analysis_block
 
-        stat_class = stat.get_statistic(background_statistic)
+        stat_class = pycbcstat.get_statistic(background_statistic)
         self.stat_calculator = stat_class(
             sngl_ranking,
             stat_files,
             ifos=ifos,
             **kwargs
         )
+
+        self.time_stat_refreshed = dt.now()
+        self.my_variable = 0
+        self.lock = threading.Lock()
+        self.statistic_refresh_rate = statistic_refresh_rate
 
         self.timeslide_interval = timeslide_interval
         self.return_background = return_background
@@ -972,7 +978,6 @@ class LiveCoincTimeslideBackgroundEstimator(object):
 
     @classmethod
     def from_cli(cls, args, num_templates, analysis_chunk, ifos):
-        from . import stat
 
         # Allow None inputs
         stat_files = args.statistic_files or []
@@ -981,7 +986,7 @@ class LiveCoincTimeslideBackgroundEstimator(object):
         # flatten the list of lists of filenames to a single list (may be empty)
         stat_files = sum(stat_files, [])
 
-        kwargs = stat.parse_statistic_keywords_opt(stat_keywords)
+        kwargs = pycbcstat.parse_statistic_keywords_opt(stat_keywords)
 
         return cls(num_templates, analysis_chunk,
                    args.ranking_statistic,
@@ -993,13 +998,13 @@ class LiveCoincTimeslideBackgroundEstimator(object):
                    ifos=ifos,
                    statistic_refresh_rate=args.statistic_refresh_rate,
                    coinc_window_pad=args.coinc_window_pad,
+                   statistic_refresh_rate=args.statistic_refresh_rate,
                    **kwargs)
 
     @staticmethod
     def insert_args(parser):
-        from . import stat
 
-        stat.insert_statistic_option_group(parser)
+        pycbcstat.insert_statistic_option_group(parser)
 
         group = parser.add_argument_group('Coincident Background Estimation')
         group.add_argument('--store-background', action='store_true',
@@ -1395,12 +1400,15 @@ class LiveCoincTimeslideBackgroundEstimator(object):
         valid_ifos = [k for k in results.keys() if results[k] and k in self.ifos]
         if len(valid_ifos) == 0: return {}
 
-        # Add single triggers to the internal buffer
-        self._add_singles_to_buffer(results, ifos=valid_ifos)
+        with self.lock:
+            # The statistic has been updated by the update thread
+            logging.warning("Main Class: my_variable value is %d", self.my_variable)
 
+            # Add single triggers to the internal buffer
+            self._add_singles_to_buffer(results, ifos=valid_ifos)
 
-        # Calculate zerolag and background coincidences
-        _, coinc_results = self._find_coincs(results, valid_ifos=valid_ifos)
+            # Calculate zerolag and background coincidences
+            _, coinc_results = self._find_coincs(results, valid_ifos=valid_ifos)
 
         # record if a coinc is possible in this chunk
         if len(valid_ifos) == 2:
@@ -1408,27 +1416,34 @@ class LiveCoincTimeslideBackgroundEstimator(object):
 
         return coinc_results
 
-    def refresh_statistic(self):
-        # check if the statistic needs updating
-        logger.info("Starting %s statistic refresh thread", ''.join(self.ifos))
+    def start_refresh_thread(self):
+        """
+        Start a thread managing whether the stat_calculaior will be updated
+        """
+        thread = threading.Thread(target=self.update_statistic, daemon=True)
+        thread.start()
+
+    def update_statistic(self):
+        """
+        Function to update the stat_calculator if the file hashes have changed
+        """
         while True:
             since_stat_refresh = (dt.now() - self.time_stat_refreshed).seconds
             if since_stat_refresh > self.statistic_refresh_rate:
-                logger.info(
-                    "Checking if %s coinc statistic needs updated",
-                    ''.join(self.ifos)
+                logger.warning(
+                    "Updating %s statistic",
+                    "".join(self.ifos),
                 )
-                self.stat_calculator.check_files_updated()
+                with self.lock:
+                    self.my_variable += 1
                 self.time_stat_refreshed = dt.now()
             else:
-                logger.debug(
-                    "Refresh thread sleeping %.3f until next refresh check",
+                logger.warning(
+                    "Waiting %.3fs for next refresh",
                     self.statistic_refresh_rate - since_stat_refresh
                 )
-                # Add one second for safety
-                time.sleep(
-                    self.statistic_refresh_rate - since_stat_refresh + 1
-                )
+                time.sleep(self.statistic_refresh_rate - since_stat_refresh + 1)
+
 
 __all__ = [
     "background_bin_from_string",
