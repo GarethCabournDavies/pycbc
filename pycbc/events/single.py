@@ -77,7 +77,7 @@ class LiveSingle(object):
         self.maximum_ifar = maximum_ifar
 
         self.time_stat_refreshed = dt.now()
-        self.lock = threading.Lock()
+        self.stat_calculator_lock = threading.Lock()
         self.statistic_refresh_rate = statistic_refresh_rate
 
         stat_class = stat.get_statistic(statistic)
@@ -275,7 +275,7 @@ class LiveSingle(object):
         trigsc['chisq_dof'] = (cut_trigs['chisq_dof'] + 2) / 2
 
         # Calculate the ranking reweighted SNR for cutting
-        with self.lock:
+        with self.stat_calculator_lock:
             single_rank = self.stat_calculator.get_sngl_ranking(trigsc)
 
         sngl_idx = single_rank > self.thresholds['newsnr']
@@ -286,7 +286,7 @@ class LiveSingle(object):
                         for k in trigs}
 
         # Calculate the ranking statistic
-        with self.lock:
+        with self.stat_calculator_lock:
             sngl_stat = self.stat_calculator.single(cutall_trigs)
             rank = self.stat_calculator.rank_stat_single((self.ifo, sngl_stat))
 
@@ -380,7 +380,7 @@ class LiveSingle(object):
                     "Checking %s statistic for updated files",
                     self.ifo,
                 )
-                with self.lock:
+                with self.stat_calculator_lock:
                     self.stat_calculator.check_update_files()
             # Sleep one second for safety
             time.sleep(1)

@@ -880,7 +880,7 @@ class LiveCoincTimeslideBackgroundEstimator(object):
         )
 
         self.time_stat_refreshed = dt.now()
-        self.lock = threading.Lock()
+        self.stat_calculator_lock = threading.Lock()
         self.statistic_refresh_rate = statistic_refresh_rate
 
         self.timeslide_interval = timeslide_interval
@@ -1381,7 +1381,7 @@ class LiveCoincTimeslideBackgroundEstimator(object):
         valid_ifos = [k for k in results.keys() if results[k] and k in self.ifos]
         if len(valid_ifos) == 0: return {}
 
-        with self.lock:
+        with self.stat_calculator_lock:
             # Add single triggers to the internal buffer
             self._add_singles_to_buffer(results, ifos=valid_ifos)
 
@@ -1422,7 +1422,7 @@ class LiveCoincTimeslideBackgroundEstimator(object):
                     "Checking %s statistic for updated files",
                     ''.join(self.ifos),
                 )
-                with self.lock:
+                with self.stat_calculator_lock:
                     self.stat_calculator.check_update_files()
             # Sleep one second for safety
             time.sleep(1)
