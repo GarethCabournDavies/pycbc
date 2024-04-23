@@ -1027,11 +1027,8 @@ parser.add_argument('--psd-variation', action='store_true',
                          "values for each single detector triggers found by "
                          "the search. Required when using a single detector "
                          "ranking statistic that includes psd variation.")
-
-parser.add_argument(
-    "--statistic-refresh-rate", type=float,
-    help="How often to refresh teh statistic object"
-)
+parser.add_argument("--statistic-refresh-rate", type=float,
+                    help="How often to refresh the statistic object")
 
 scheme.insert_processing_option_group(parser)
 LiveSingle.insert_args(parser)
@@ -1169,15 +1166,18 @@ with ctx:
             estimators.append(Coincer.from_cli(
                 args, len(bank), args.analysis_chunk, list(combo)
             ))
-
+        import multiprocessing
         my_coinc_id = 999999
         def set_coinc_id(i):
             global my_coinc_id
             my_coinc_id = i
             c = estimators[my_coinc_id]
-            c.start_refresh_thread()
             setproctitle('PyCBC Live {} bg estimator'.format(
                     ppdets(c.ifos, '-')))
+
+        def estimator_refresh_threads(_):
+            c = estimators[my_coinc_id]
+            c.start_refresh_thread()
 
         def get_coinc(results):
             c = estimators[my_coinc_id]
@@ -1193,6 +1193,7 @@ with ctx:
 
         coinc_pool = BroadcastPool(len(estimators))
         coinc_pool.allmap(set_coinc_id, range(len(estimators)))
+        coinc_pool.broadcast(estimator_refresh_threads, None)
 
     logging.info('Starting')
 

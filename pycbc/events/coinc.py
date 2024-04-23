@@ -26,9 +26,10 @@ coincident triggers.
 """
 
 import numpy, logging, pycbc.pnutils, pycbc.conversions, copy, lal
-import time
 from datetime import datetime as dt
+import time
 import threading
+import multiprocessing
 
 from pycbc.detector import Detector, ppdets
 from pycbc.conversions import mchirp_from_mass1_mass2
@@ -832,7 +833,6 @@ class LiveCoincTimeslideBackgroundEstimator(object):
                  coinc_window_pad=.002,
                  statistic_refresh_rate=None,
                  return_background=False,
-                 statistic_refresh_rate=None,
                  **kwargs):
         """
         Parameters
@@ -906,18 +906,6 @@ class LiveCoincTimeslideBackgroundEstimator(object):
         # temporary array used in `_find_coincs()` to turn `trig_stat`
         # into an array much faster than using `numpy.resize()`
         self.trig_stat_memory = None
-
-        # Values to control how often the statistic is refreshed
-        self.time_stat_refreshed = dt.now()
-        self.statistic_refresh_rate = statistic_refresh_rate
-
-        # Start a thread which checks/updates the statistic files
-        if self.statistic_refresh_rate is not None:
-            refresh_stat_thread = threading.Thread(
-                target=self.refresh_statistic,
-                daemon=True,
-            )
-            refresh_stat_thread.start()
 
 
     @classmethod
@@ -995,7 +983,6 @@ class LiveCoincTimeslideBackgroundEstimator(object):
                    ifar_limit=args.background_ifar_limit,
                    timeslide_interval=args.timeslide_interval,
                    ifos=ifos,
-                   statistic_refresh_rate=args.statistic_refresh_rate,
                    coinc_window_pad=args.coinc_window_pad,
                    statistic_refresh_rate=args.statistic_refresh_rate,
                    **kwargs)
@@ -1015,9 +1002,6 @@ class LiveCoincTimeslideBackgroundEstimator(object):
             help="The interval between timeslides in seconds", default=0.1)
         group.add_argument('--ifar-remove-threshold', type=float,
             help="NOT YET IMPLEMENTED", default=100.0)
-        group.add_argument('--statistic-refresh-rate', type=float,
-            help="How regularly to check whether the statistic files "
-                 "have been modified, seconds. Default=do not refresh")
 
     @staticmethod
     def verify_args(args, parser):
@@ -1414,33 +1398,47 @@ class LiveCoincTimeslideBackgroundEstimator(object):
 
     def start_refresh_thread(self):
         """
-        Start a thread managing whether the stat_calculaior will be updated
+        Start a thread managing whether the stat_calculator will be updated
         """
-        thread = threading.Thread(target=self.update_statistic, daemon=True)
+        thread = threading.Thread(
+            target=self.refresh_statistic,
+            daemon=True
+        )
+        logger.info(
+            "Starting %s statistic refresh thread, %s",
+            ''.join(self.ifos), multiprocessing.current_process().name,
+        )
         thread.start()
 
-    def update_statistic(self):
+    def refresh_statistic(self):
         """
-        Function to update the stat_calculator if the file hashes have changed
+        Function to refresh the stat_calculator at regular intervals
         """
         while True:
-            since_stat_refresh = (dt.now() - self.time_stat_refreshed).seconds
+            # How long since the statistic was last updated?
+            since_stat_refresh = \
+                (dt.now() - self.time_stat_refreshed).total_seconds()
             if since_stat_refresh > self.statistic_refresh_rate:
+                self.time_stat_refreshed = dt.now()
                 logger.info(
                     "Checking %s statistic for updated files",
-                    ''.join(self.ifos)
+                    ''.join(self.ifos),
                 )
                 with self.lock:
                     self.stat_calculator.check_update_files()
-                self.time_stat_refreshed = dt.now()
-            else:
-                logger.debug(
-                    "%s statistic: Waiting %.3fs for next refresh",
-                    ''.join(self.ifos),
-                    self.statistic_refresh_rate - since_stat_refresh
-                )
-                time.sleep(self.statistic_refresh_rate - since_stat_refresh + 1)
-
+            # Sleep one second for safety
+            time.sleep(1)
+            # Now include the time it took the check / update the statistic
+            since_stat_refresh = \
+                (dt.now() - self.time_stat_refreshed).total_seconds()
+            logger.debug(
+                "%s statistic: Waiting %.3fs for next refresh",
+                ''.join(self.ifos),
+                self.statistic_refresh_rate - since_stat_refresh,
+            )
+            time.sleep(
+                self.statistic_refresh_rate - since_stat_refresh + 1
+            )
 
 __all__ = [
     "background_bin_from_string",

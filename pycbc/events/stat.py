@@ -63,7 +63,6 @@ class Stat(object):
         self.files = {}
         # Keep track of when stat files last modified so it can be
         # reloaded if it has changed
-        self.file_mtimes = {}
         files = files or []
         for filename in files:
             with h5py.File(filename, 'r') as f:
@@ -97,7 +96,7 @@ class Stat(object):
         """
         Get sha1 hashes for all the files
         """
-        logger.info(
+        logger.debug(
             "Getting file hashes"
         )
         start = dt.now()
@@ -127,7 +126,10 @@ class Stat(object):
             else:
                 del changed_file_hashes[stat]
         else:
-            logger.info("No files have changed")
+            logger.debug(
+                "No %s statistic files have changed",
+                ''.join(self.ifos)
+            )
         return list(changed_file_hashes.keys())
 
     def check_update_files(self):
@@ -142,7 +144,7 @@ class Stat(object):
 
     def update_file(self, key):
         """
-        Update file used in this statistic reference by key.
+        Update file used in this statistic referenced by key.
         """
         err_msg = "This function is a stub that should be overridden by the "
         err_msg += "sub-classes. You shouldn't be seeing this error!"
@@ -248,25 +250,6 @@ class Stat(object):
         err_msg = "This function is a stub that should be overridden by the "
         err_msg += "sub-classes. You shouldn't be seeing this error!"
         raise NotImplementedError(err_msg)
-
-    def check_files_updated(self):
-        """
-        Check whether the files used in the statistic have been uploaded.
-        Return a list of the files which need updating
-        """
-        for k, v in list(self.file_mtimes.items()):
-            # Get most recent modified time
-            mtime_new = os.path.getmtime(self.files[k])
-            # Check if the file has been modified since it was last loaded
-            if not mtime_new == v:
-                # If it has been modified, update it
-                if self.update_file(k):
-                    logger.info(
-                        "Updated %s statistic's %s stat file %s",
-                        ''.join(self.ifos),
-                        k,
-                        self.files[k]
-                    )
 
 
 class QuadratureSumStatistic(Stat):
@@ -433,6 +416,13 @@ class PhaseTDStatistic(QuadratureSumStatistic):
 
         if pregenerate_hist and not len(ifos) == 1:
             self.get_hist()
+        elif len(ifos) == 1:
+            # remove all phasetd files from self.files and self.file_hashes,
+            # as they are not needed
+            for k in list(self.files.keys()):
+                if 'phasetd_newsnr' in k:
+                    del self.files[k]
+                    del self.file_hashes[k]
 
     def get_hist(self, ifos=None):
         """
@@ -461,6 +451,14 @@ class PhaseTDStatistic(QuadratureSumStatistic):
                     continue
                 selected = name
                 break
+
+        # If there are other phasetd_newsnr files, they aren't needed.
+        # So tidy them out of the self.files dictionary
+        rejected = [key for key in self.files.keys()
+                    if 'phasetd_newsnr' in key and not key == selected]
+        for k in rejected:
+            del self.files[k]
+            del self.file_hashes[k]
 
         if selected is None and len(ifos) > 1:
             raise RuntimeError("Couldn't figure out which stat file to use")

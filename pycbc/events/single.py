@@ -7,9 +7,6 @@ import threading
 from datetime import datetime as dt
 import time
 import numpy as np
-from datetime import datetime as dt
-import time
-from multiprocessing.dummy import threading
 
 from pycbc.events import trigger_fits as fits, stat
 from pycbc.types import MultiDetOptionAction
@@ -33,6 +30,46 @@ class LiveSingle(object):
                  stat_files=None,
                  statistic_refresh_rate=None,
                  **kwargs):
+        """
+        Parameters
+        ----------
+        ifo: str
+            Name of the ifo that is being analyzed
+        newsnr_threshold: float
+            Minimum value for the reweighted SNR of the event under
+            consideration. Which reweighted SNR is defined by sngl_ranking
+        reduced_chisq_threshold: float
+            Maximum value for the reduced chisquared of the event under
+            consideration
+        duration_threshold: float
+            Minimum value for the duration of the template which found the
+            event under consideration
+        fit_file: str or path
+            (optional) the file containing information about the
+            single-detector event significance distribution fits
+        sngl_ifar_est_dist: str
+            Which trigger distribution to use when calculating IFAR of
+            single-detector events
+        fixed_ifar: float
+            (optional) give a fixed IFAR value to any event which passes the
+            threshold criteria
+        statistic: str
+            The name of the statistic to rank events.
+        sngl_ranking: str
+            The single detector ranking to use with the background statistic
+        stat_files: list of strs
+            List of filenames that contain information used to construct
+            various coincident statistics.
+        maximum_ifar: float
+            The largest inverse false alarm rate in years that we would like to
+            calculate.
+        statistic_refresh_rate: float
+            How regularly to run the update_files method on the statistic
+            class (in seconds), default not do do this
+        kwargs: dict
+            Additional options for the statistic to use. See stat.py
+            for more details on statistic options.
+        """
         self.ifo = ifo
         self.fit_file = fit_file
         self.sngl_ifar_est_dist = sngl_ifar_est_dist
@@ -50,18 +87,6 @@ class LiveSingle(object):
             ifos=[ifo],
             **kwargs
         )
-
-        # Values to control how often the statistic is refreshed
-        self.time_stat_refreshed = dt.now()
-        self.statistic_refresh_rate = statistic_refresh_rate
-
-        # Start a thread which checks/updates the statistic files
-        if self.statistic_refresh_rate is not None:
-            refresh_stat_thread = threading.Thread(
-                target=self.refresh_statistic,
-                daemon=True,
-            )
-            refresh_stat_thread.start()
 
         self.thresholds = {
             "newsnr": newsnr_threshold,
@@ -332,29 +357,41 @@ class LiveSingle(object):
 
     def start_refresh_thread(self):
         """
-        Start a thread managing whether the stat_calculaior will be updated
+        Start a thread managing whether the stat_calculator will be updated
         """
-        thread = threading.Thread(target=self.update_statistic, daemon=True)
+        thread = threading.Thread(
+            target=self.refresh_statistic,
+            daemon=True
+        )
+        logger.info("Starting %s statistic refresh thread", self.ifo)
         thread.start()
 
-    def update_statistic(self):
+    def refresh_statistic(self):
         """
-        Function to update the stat_calculator if the file hashes have changed
+        Function to refresh the stat_calculator at regular intervals
         """
         while True:
-            since_stat_refresh = (dt.now() - self.time_stat_refreshed).seconds
+            # How long since the statistic was last updated?
+            since_stat_refresh = \
+                (dt.now() - self.time_stat_refreshed).total_seconds()
             if since_stat_refresh > self.statistic_refresh_rate:
+                self.time_stat_refreshed = dt.now()
                 logger.info(
                     "Checking %s statistic for updated files",
-                    self.ifo
+                    self.ifo,
                 )
                 with self.lock:
                     self.stat_calculator.check_update_files()
-                self.time_stat_refreshed = dt.now()
-            else:
-                logger.debug(
-                    "%s statistic: Waiting %.3fs for next refresh",
-                    self.ifo,
-                    self.statistic_refresh_rate - since_stat_refresh
-                )
-                time.sleep(self.statistic_refresh_rate - since_stat_refresh + 1)
+            # Sleep one second for safety
+            time.sleep(1)
+            # Now use the time it took the check / update the statistic
+            since_stat_refresh = \
+                (dt.now() - self.time_stat_refreshed).total_seconds()
+            logger.debug(
+                "%s statistic: Waiting %.3fs for next refresh",
+                self.ifo,
+                self.statistic_refresh_rate - since_stat_refresh
+            )
+            time.sleep(
+                self.statistic_refresh_rate - since_stat_refresh
+            )
