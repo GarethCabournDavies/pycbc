@@ -906,7 +906,6 @@ class LiveCoincTimeslideBackgroundEstimator(object):
         # into an array much faster than using `numpy.resize()`
         self.trig_stat_memory = None
 
-
     @classmethod
     def pick_best_coinc(cls, coinc_results):
         """Choose the best two-ifo coinc by ifar first, then statistic if needed.

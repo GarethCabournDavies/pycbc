@@ -26,10 +26,8 @@ This module contains functions for calculating coincident ranking statistic
 values.
 """
 import logging
-import os
 import numpy
 import h5py
-import os
 from hashlib import sha1
 from datetime import datetime as dt
 
@@ -61,8 +59,6 @@ class Stat(object):
         """
 
         self.files = {}
-        # Keep track of when stat files last modified so it can be
-        # reloaded if it has changed
         files = files or []
         for filename in files:
             with h5py.File(filename, 'r') as f:
@@ -74,6 +70,8 @@ class Stat(object):
                                    " %s. Can't provide more than one!" % stat)
             logger.info("Found file %s for stat %s", filename, stat)
             self.files[stat] = filename
+        # Keep track of when stat files hashes so it can be
+        # reloaded if it has changed
         self.file_hashes = self.get_file_hashes()
 
         # Provide the dtype of the single detector method's output
@@ -113,7 +111,7 @@ class Stat(object):
 
     def files_changed(self):
         """
-        Compare sha1 hashes of files now with the ones on file
+        Compare hashes of files now with the ones we have cached
         """
         changed_file_hashes = self.get_file_hashes()
         for stat, old_hash in self.file_hashes.items():
