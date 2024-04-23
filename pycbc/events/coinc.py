@@ -29,7 +29,6 @@ import numpy, logging, pycbc.pnutils, pycbc.conversions, copy, lal
 from datetime import datetime as dt
 import time
 import threading
-import multiprocessing
 
 from pycbc.detector import Detector, ppdets
 from pycbc.conversions import mchirp_from_mass1_mass2
@@ -1405,8 +1404,8 @@ class LiveCoincTimeslideBackgroundEstimator(object):
             daemon=True
         )
         logger.info(
-            "Starting %s statistic refresh thread, %s",
-            ''.join(self.ifos), multiprocessing.current_process().name,
+            "Starting %s statistic refresh thread",
+            ''.join(self.ifos),
         )
         thread.start()
 

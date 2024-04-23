@@ -1166,7 +1166,7 @@ with ctx:
             estimators.append(Coincer.from_cli(
                 args, len(bank), args.analysis_chunk, list(combo)
             ))
-        import multiprocessing
+
         my_coinc_id = 999999
         def set_coinc_id(i):
             global my_coinc_id
