@@ -16,7 +16,6 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 import argparse
-import h5py
 import numpy
 import sys
 import lal
@@ -26,6 +25,7 @@ import pycbc.results
 import pycbc.version
 import copy
 from pycbc.events import veto
+from pycbc.io import HFile
 from ligo import segments
 
 def calculate_time_slide_duration(pifo_segments, fifo_segments, offset=0):
@@ -89,7 +89,7 @@ parser.add_argument('--open-box', action='store_true', default=False,
 opts = parser.parse_args()
 
 # read file
-fp = h5py.File(opts.trigger_file, 'r')
+fp = HFile(opts.trigger_file, 'r')
 
 # Parse which inclusive background to use for the plotting
 h_inc_back_num = opts.use_hierarchical_level

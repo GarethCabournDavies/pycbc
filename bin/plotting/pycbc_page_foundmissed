@@ -1,13 +1,14 @@
 #!/usr/bin/env python
 """ Plot found and missed injections.
 """
-import h5py, numpy, logging, os.path, argparse, sys
+import numpy, logging, os.path, argparse, sys
 import matplotlib; matplotlib.use('Agg')
 import matplotlib.pyplot as plot
 import pycbc.results.followup, pycbc.pnutils, pycbc.results, pycbc.version
 import pycbc.pnutils
 from pycbc import init_logging
 from pycbc.detector import Detector
+from pycbc.io.hdf import HFile
 
 labels={'mchirp': 'Chirp Mass',
         'mtotal': 'Total Mass',
@@ -64,7 +65,7 @@ args = parser.parse_args()
 init_logging(args.verbose)
 
 logging.info('Read in the data')
-f = h5py.File(args.injection_file, 'r')
+f = HFile(args.injection_file, 'r')
 time = f['injections/tc'][:]
 found = f['found_after_vetoes/injection_index'][:]
 missed = f['missed/after_vetoes'][:]

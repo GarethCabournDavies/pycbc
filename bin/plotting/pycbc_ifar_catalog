@@ -16,17 +16,17 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 import argparse
-import h5py
 import numpy
 import sys
 import matplotlib as mpl; mpl.use('Agg')
 import pylab
+import logging
 import pycbc.results
 import pycbc.version
 from pycbc import conversions
 from scipy.stats import norm, poisson
-import logging
 from pycbc import init_logging
+from pycbc.io.hdf import HFile
 
 parser = argparse.ArgumentParser(usage='pycbc_ifar_catalog [--options]',
                     description='Plots cumulative IFAR vs count for'
@@ -74,7 +74,7 @@ if opts.use_tex:
     pylab.rc('text', usetex=True)
     pylab.rc('font', **{'family': 'serif', 'serif': ['Computer Modern']})
 
-trigf = [h5py.File(f, 'r') for f in opts.trigger_files]
+trigf = [HFile(f, 'r') for f in opts.trigger_files]
 
 # Parse which inclusive background to use for the plotting
 h_inc_back_num = opts.use_hierarchical_level
