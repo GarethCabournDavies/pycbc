@@ -3,11 +3,12 @@
     Also has the ability to plot inclusive backgrounds from different stages
     of hierarchical removal.
 """
-import argparse, h5py, numpy, logging, sys, lal
+import argparse, numpy, logging, sys, lal
 import matplotlib
 matplotlib.use('Agg')
 import pylab, pycbc.results, pycbc.version
 from scipy.special import erf, erfinv
+from pycbc.io.hdf import HFile
 
 def sigma_from_p(p):
     return - erfinv(1 - (1 - p) * 2) * 2**0.5
@@ -43,7 +44,7 @@ parser.add_argument('--closed-box', action='store_true',
 args = parser.parse_args()
 
 logging.info('Read in the data')
-f = h5py.File(args.trigger_file, 'r')
+f = HFile(args.trigger_file, 'r')
 
 # Determine which inclusive background to plot.
 h_inc_back_num = args.use_hierarchical_level
