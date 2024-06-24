@@ -16,7 +16,6 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-import h5py
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -24,6 +23,8 @@ import numpy as np
 import argparse
 from matplotlib.pyplot import cm
 from math import ceil
+
+from pycbc.io.hdf import HFile
 
 parser = argparse.ArgumentParser()
 parser = argparse.ArgumentParser(description="Plot ratios of VTs calculated at"
@@ -47,8 +48,8 @@ parser.add_argument('--log-y', action='store_true', default=False,
 args = parser.parse_args()
 
 # Load in the two datasets
-f1 = h5py.File(args.vt_file_one)
-f2 = h5py.File(args.vt_file_two)
+f1 = HFile(args.vt_file_one)
+f2 = HFile(args.vt_file_two)
 
 x1 = f1['xvals'][:]
 x2 = f2['xvals'][:]

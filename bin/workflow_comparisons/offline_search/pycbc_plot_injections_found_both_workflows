@@ -16,12 +16,13 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 
-import h5py
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 import argparse
+
+from pycbc.io.hdf import HFile
 
 parser = argparse.ArgumentParser()
 parser = argparse.ArgumentParser(description="Plot histograms of ratio of IFAR"
@@ -44,7 +45,7 @@ parser.add_argument('--log-y', action='store_true', default=False,
 args = parser.parse_args()
 
 # Load in the two datasets
-f = h5py.File(args.combined_comparison_file)
+f = HFile(args.combined_comparison_file)
 
 ifar_ratio = f[args.found_category]['found_in_both']['ifar']['ratio'][:]
 stat_ratio = f[args.found_category]['found_in_both']['stat']['ratio'][:]
