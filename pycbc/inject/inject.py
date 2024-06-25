@@ -31,7 +31,6 @@ import lal
 import copy
 import logging
 from abc import ABCMeta, abstractmethod
-import h5py
 from pycbc import waveform, frame, libutils
 from pycbc.opt import LimitedSizeDict
 from pycbc.waveform import (get_td_waveform, fd_det,
