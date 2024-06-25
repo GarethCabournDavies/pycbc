@@ -17,10 +17,10 @@
 from the command line.
 """
 
+import h5py
 import numpy
 from pycbc import conversions, pnutils
 from pycbc.events import coinc
-from pycbc.io.hdf import HFile
 import pycbc.detector
 
 
@@ -66,7 +66,7 @@ def bank_bins_from_cli(opts):
         A dict of the datasets from the bank file.
     """
     bank = {}
-    fp = HFile(opts.bank_file)
+    fp = h5py.File(opts.bank_file)
     for key in fp.keys():
         bank[key] = fp[key][:]
     bank["f_lower"] = float(opts.f_lower) if opts.f_lower else None
@@ -84,7 +84,7 @@ def get_mass_spin(bank, tid):
 
     Parameters
     ----------
-    bank : HFile object
+    bank : h5py File object
         Bank parameter file
     tid : integer or array of int
         Indices of the entries to be returned
