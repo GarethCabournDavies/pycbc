@@ -71,5 +71,5 @@ jobs:
         BRANCH: gh-pages
         BASE_BRANCH: gh-pages
         FOLDER: latest
-        TARGET_FOLDER: $(if [ github.event_name == 'release']; then echo ${GITHUB_REF#refs/tags/}; else echo latest; fi)
+        TARGET_FOLDER: ${{ (if [ github.event_name == 'release']; then echo ${GITHUB_REF#refs/tags/}; else echo latest; fi) }}
 
