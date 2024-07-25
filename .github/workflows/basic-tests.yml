@@ -69,6 +69,7 @@ jobs:
       with:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         BRANCH: gh-pages
+        BASE_BRANCH: gh-pages
         FOLDER: _gh_pages
         TARGET_FOLDER: $(if [ github.event_name == 'release']; then echo ${GITHUB_REF#refs/tags/}; else echo latest; fi)
 
