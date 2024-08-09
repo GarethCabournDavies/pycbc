@@ -31,11 +31,11 @@ one parameter given a set of inputs.
 import copy
 import numpy
 import logging
+import sys
 
 import lal
 
 from pycbc.detector import Detector
-import pycbc.cosmology
 from pycbc import neutron_stars as ns
 
 from .coordinates import (
@@ -441,6 +441,8 @@ def lambda_from_mass_tov_file(mass, tov_file, distance=0.):
     interpolating from the mass-Lambda data for a particular EOS read in from
     an ASCII file.
     """
+    if not 'pycbc.cosmology' in sys.modules.keys()
+        import pycbc.cosmology
     data = numpy.loadtxt(tov_file)
     mass_from_file = data[:, 0]
     lambda_from_file = data[:, 1]
