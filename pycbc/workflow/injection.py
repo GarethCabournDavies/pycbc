@@ -253,13 +253,14 @@ def setup_injection_workflow(workflow, output_dir=None,
             )
             curr_file = resolve_url_to_file(injection_path, attrs=file_attrs)
             inj_files.append(curr_file)
-        elif injection_method == "IN_FRAME":
-            # IN_FRAME means that we will supply frames with the appropriate
+        elif injection_method == "UNKNOWN_IN_FRAME":
+            # UNKNOWN_IN_FRAME means that we will supply frames with the appropriate
             # injections unknown to the analysis
             inj_files.append(None)
         else:
-            err = "Injection method must be one of IN_WORKFLOW, IN_FRAME, "
-            err += "AT_RUNTIME or PREGENERATED. Got %s." % (injection_method)
+            err = "Injection method must be one of IN_WORKFLOW, "
+            err += "UNKNOWN_IN_FRAME, AT_RUNTIME or PREGENERATED. "
+            err += "Got %s." % (injection_method)
             raise ValueError(err)
 
         inj_tags.append(inj_tag)
