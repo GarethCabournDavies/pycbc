@@ -87,8 +87,12 @@ def projector(detector_name, inj, hp, hc, distance_scale=1):
     """
     detector = Detector(detector_name)
 
-    hp /= distance_scale
-    hc /= distance_scale
+    if distance_scale == 0:
+        hp *= 0
+        hc *= 0
+    else:
+        hp /= distance_scale
+        hc /= distance_scale
 
     try:
         tc = inj.tc

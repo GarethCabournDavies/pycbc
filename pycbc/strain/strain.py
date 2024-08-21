@@ -553,7 +553,8 @@ def insert_strain_option_group(parser, gps_times=True):
     data_reading_group.add_argument("--injection-scale-factor", type=float,
                       default=1,
                       help="Divide injections by this factor "
-                           "before adding to the strain data")
+                           "before adding to the strain data. 0 is a special "
+                           "case where this is multiplied rather than divided")
     data_reading_group.add_argument("--injection-sample-rate", type=float,
                       help="Sample rate to use for injections (integer Hz). "
                            "Typically similar to the strain data sample rate."
@@ -770,7 +771,8 @@ def insert_strain_option_group_multi_ifo(parser, gps_times=True):
                     type=float, nargs="+", action=MultiDetOptionAction,
                     metavar="IFO:VAL", default=1.,
                     help="Divide injections by this factor "
-                         "before adding to the strain data")
+                         "before adding to the strain data. 0 is a special "
+                         "case where this is multiplied rather than divided")
     data_reading_group_multi.add_argument("--injection-sample-rate",
                     type=float, nargs="+", action=MultiDetOptionAction,
                     metavar="IFO:VAL",

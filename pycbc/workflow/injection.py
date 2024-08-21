@@ -258,7 +258,7 @@ def setup_injection_workflow(workflow, output_dir=None,
             # injections unknown to the analysis
             inj_files.append(None)
         else:
-            err = "Injection method must be one of IN_WORKFLOW, "
+            err = "Injection method must be one of IN_WORKFLOW, IN_FRAME, "
             err += "AT_RUNTIME or PREGENERATED. Got %s." % (injection_method)
             raise ValueError(err)
 
