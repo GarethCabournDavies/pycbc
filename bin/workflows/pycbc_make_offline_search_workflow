@@ -708,19 +708,15 @@ for inj_file, tag in zip(inj_files, inj_tags):
         files_for_combined_injfind.append(file_for_injfind)
 
     # setup the matchedfilter jobs
-    if inj_file is None:
-        # datafind may be different for unknown injections
-        datafind_files_inj, _, analyzable_segs_inj, _ = \
-            wf.setup_datafind_workflow(
-                workflow,
-                ssegs,
-                "datafind",
-                seg_file=science_seg_file,
-                tags=hoft_tags+ctags
-            )
-    else:
-        datafind_files_inj = datafind_files
-        analyzable_segs_inj = analyzable_segs
+    # datafind may be different for unknown injections
+    datafind_files_inj, _, analyzable_segs_inj, _ = \
+        wf.setup_datafind_workflow(
+            workflow,
+            ssegs,
+            "datafind",
+            seg_file=science_seg_file,
+            tags=hoft_tags+ctags
+        )
 
     insps = wf.setup_matchedfltr_workflow(
         workflow,

@@ -1297,7 +1297,7 @@ class ForegroundTriggers(object):
 
         ligolw_utils.write_filename(outdoc, file_name)
 
-    def to_coinc_hdf_object(self, file_name, exclusive=False):
+    def to_coinc_hdf_object(self, file_name):
         ofd = HFile(file_name,'w')
 
         # Some fields are special cases

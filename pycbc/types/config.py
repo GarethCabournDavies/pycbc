@@ -249,6 +249,11 @@ class InterpolatingConfigParser(DeepCopyableConfigParser):
 
     def get_subsections(self, section_name):
         """Return a list of subsections for the given section name"""
+        if not self.has_section(section_name):
+            # This section does nto exist - we might hit this if we are
+            # using multiple tags for a section of the config (i.e.
+            # [section-tag-tag])
+            return []
         # Keep only subsection names
         subsections = [
             sec[len(section_name) + 1:]
@@ -279,10 +284,8 @@ class InterpolatingConfigParser(DeepCopyableConfigParser):
 
         if len(subsections) > 0:
             return [sec.split("-")[0] for sec in subsections]
-        elif self.has_section(section_name):
-            return [""]
         else:
-            return []
+            return [""]
 
     def perform_extended_interpolation(self):
         """

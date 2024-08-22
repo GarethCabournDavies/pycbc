@@ -28,7 +28,7 @@ parser.add_argument('--use-exclusive-ifar', action='store_true',
                     help='Indicate to use exclusive IFAR rather than '
                          'inclusive. Incompatible with '
                          '--use-hierarchical-level.')
-parser.add_argument('--use-hierarchical-level', type=int, default=None,
+parser.add_argument('--use-hierarchical-level', type=int,
                     help='Indicate which FARs to write to the table '
                          'based on the number of hierarchical removals done. '
                          'Choosing None defaults to giving the FARs after '
