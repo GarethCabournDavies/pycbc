@@ -212,10 +212,10 @@ def schemed(prefix):
 
                     return schemed_fn(*args, **kwds)
 
-                err = """Failed to find implementation of (%s)
-                      for %s scheme." % (str(fn), current_prefix())"""
+                err = (f"Failed to find implementation of {func.__name__} "
+                       f"for {current_prefix()} scheme")
                 for emsg in exc_errors:
-                    err += print(emsg)
+                    err += " : " + repr(emsg)
                 raise RuntimeError(err)
         return _scheming_function
 
