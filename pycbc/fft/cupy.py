@@ -22,61 +22,51 @@
 # =============================================================================
 #
 """
-This module provides the numpy backend of the fast Fourier transform
+This module provides the cupy backend of the fast Fourier transform
 for the PyCBC package.
 """
 
 import logging
-
-import numpy
-
-logger = logging.getLogger('pycbc.events.npfft')
-
-import numpy.fft as np_fft
-from numpy import asarray
-
+import cupy.fft
 from .core import _check_fft_args
 from .core import _BaseFFT, _BaseIFFT
+
+logger = logging.getLogger('pycbc.events.npfft')
 
 _INV_FFT_MSG = ("I cannot perform an {} between data with an input type of "
                 "{} and an output type of {}")
 
 def fft(invec, outvec, _, itype, otype):
     if invec.ptr == outvec.ptr:
-        raise NotImplementedError("numpy backend of pycbc.fft does not "
+        raise NotImplementedError("cupy backend of pycbc.fft does not "
                                   "support in-place transforms")
-    print(invec.dtype)
-    print(itype)
-    print(outvec.dtype)
-    print(len(outvec))
-    print(otype)
     if itype == 'complex' and otype == 'complex':
-        outvec.data[:] = asarray(np_fft.fft(invec.data),
-                                 dtype=outvec.dtype)
+        outvec.data[:] = cupy.asarray(cupy.fft.fft(invec.data),
+                                       dtype=outvec.dtype)
     elif itype == 'real' and otype == 'complex':
-        outvec.data[:] = asarray(np_fft.rfft(invec.data),
-                                 dtype=outvec.dtype)
+        outvec.data[:] = cupy.asarray(cupy.fft.rfft(invec.data),
+                                       dtype=outvec.dtype)
     else:
         raise ValueError(_INV_FFT_MSG.format("FFT", itype, otype))
 
 
 def ifft(invec, outvec, _, itype, otype):
     if invec.ptr == outvec.ptr:
-        raise NotImplementedError("numpy backend of pycbc.fft does not "
+        raise NotImplementedError("cupy backend of pycbc.fft does not "
                                   "support in-place transforms")
     if itype == 'complex' and otype == 'complex':
-        outvec.data[:] = asarray(np_fft.ifft(invec.data),
-                                 dtype=outvec.dtype)
+        outvec.data[:] = cupy.asarray(cupy.fft.ifft(invec.data),
+                                       dtype=outvec.dtype)
         outvec *= len(outvec)
     elif itype == 'complex' and otype == 'real':
-        outvec.data[:] = asarray(np_fft.irfft(invec.data,len(outvec)),
-                                 dtype=outvec.dtype)
+        outvec.data[:] = cupy.asarray(cupy.fft.irfft(invec.data,len(outvec)),
+                                       dtype=outvec.dtype)
         outvec *= len(outvec)
     else:
         raise ValueError(_INV_FFT_MSG.format("IFFT", itype, otype))
 
 
-WARN_MSG = ("You are using the class-based PyCBC FFT API, with the numpy "
+WARN_MSG = ("You are using the class-based PyCBC FFT API, with the cupy "
             "backed. This is provided for convenience only. If performance is "
             "important use the class-based API with one of the other backends "
             "(for e.g. MKL or FFTW)")
@@ -84,7 +74,7 @@ WARN_MSG = ("You are using the class-based PyCBC FFT API, with the numpy "
 
 class FFT(_BaseFFT):
     """
-    Class for performing FFTs via the numpy interface.
+    Class for performing FFTs via the cupy interface.
     """
     def __init__(self, invec, outvec, nbatch=1, size=None):
         super(FFT, self).__init__(invec, outvec, nbatch, size)
@@ -97,7 +87,7 @@ class FFT(_BaseFFT):
 
 class IFFT(_BaseIFFT):
     """
-    Class for performing IFFTs via the numpy interface.
+    Class for performing IFFTs via the cupy interface.
     """
     def __init__(self, invec, outvec, nbatch=1, size=None):
         super(IFFT, self).__init__(invec, outvec, nbatch, size)

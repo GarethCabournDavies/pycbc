@@ -1,4 +1,4 @@
-# Copyright (C) 2012  Alex Nitz
+# Copyright (C) 2012-2024  Alex Nitz, Gareth Cabourn Davies
 # This program is free software; you can redistribute it and/or modify it
 # under the terms of the GNU General Public License as published by the
 # Free Software Foundation; either version 3 of the License, or (at your
@@ -14,14 +14,7 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 
-#
-# =============================================================================
-#
-#                                   Preamble
-#
-# =============================================================================
-#
-"""Pycuda based 
+"""CuPy cuda based 
 """
 import pycuda.driver
 from pycuda.elementwise import ElementwiseKernel
@@ -33,19 +26,30 @@ from pytools import match_precision
 from pycuda.gpuarray import _get_common_dtype, empty, GPUArray
 import pycuda.gpuarray
 from pycuda.scan import InclusiveScanKernel
+import cupy as cp
 import numpy as np
 
-include_complex = """
-#include <pycuda-complex.hpp>
-"""
-
-@context_dependent_memoize
 def get_cumsum_kernel(dtype):
-    return InclusiveScanKernel(dtype, "a+b", preamble=include_complex)
+    # Use CuPy's RawKernel for custom inclusive scan kernel
+    dtype_str = cp.dtype(dtype).name
+    scan_code = f'''
+    extern "C" __global__ void cumsum({dtype_str} *x, {dtype_str} *out, int n) {{
+        int tid = threadIdx.x + blockIdx.x * blockDim.x;
+        if (tid < n) {{
+            for (int i = 1; i < n; ++i) {{
+                out[i] = out[i - 1] + x[i];
+            }}
+        }}
+    }}
+    '''
+    return cp.RawKernel(scan_code, "cumsum", options=("-std=c++11",), backend='nvrtc')
+
 
 def icumsum(vec):
     krnl = get_cumsum_kernel(vec.dtype)
-    return krnl(vec)
+    result = cp.empty_like(vec)
+    krnl((vec.size // 256 + 1,), (256,), (vec, result, vec.size))
+    return result
 
 @context_dependent_memoize
 def call_prepare(self, sz, allocator):
