@@ -1,4 +1,4 @@
-# Copyright (C) 2016  Josh Willis
+# Copyright (C) 2016-2024  Josh Willis, Gareth Cabourn Davies
 # This program is free software; you can redistribute it and/or modify it
 # under the terms of the GNU General Public License as published by the
 # Free Software Foundation; either version 3 of the License, or (at your
@@ -14,17 +14,10 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 
-#
-# =============================================================================
-#
-#                                   Preamble
-#
-# =============================================================================
-#
 import numpy
 import mako.template
-from pycuda import gpuarray
-from pycuda.compiler import SourceModule
+import cupy as cp
+from cupy import RawModule
 import pycbc.scheme
 from pycbc.types import zeros
 
@@ -49,11 +42,12 @@ from pycbc.types import zeros
 # sequential threads will access sequential memory locations.
 
 kernel_sources = mako.template.Template("""
-texture<float, 1> freq_tex;
-texture<float, 1> amp_tex;
-texture<float, 1> phase_tex;
-
-__device__ int binary_search(float freq, int lower, int upper){
+extern "C" {
+//texture<float, 1> freq_tex;
+//texture<float, 1> amp_tex;
+//texture<float, 1> phase_tex;
+//
+__device__ int binary_search(float freq, int lower, int upper, const float* freq_array){
 
     /*
 
@@ -68,10 +62,12 @@ __device__ int binary_search(float freq, int lower, int upper){
        upper: The index into the frequency texture at which
               to end the search
 
+       freq_array: The array of frequencies to compare
+
        Return value:
        =============
-       The largest index into the frequency texture for
-       which the value of the texture at that index is less
+       The largest index into the frequency array for
+       which the value of the array at that index is less
        than or equal to the target frequency 'freq'.
 
      */
@@ -81,7 +77,7 @@ __device__ int binary_search(float freq, int lower, int upper){
 
     while (begin != end){
         int mid = (begin + end)/2;
-        float fcomp = tex1Dfetch(freq_tex, (float) mid);
+        float fcomp = freq_array[mid];
         if (fcomp <= freq){
           begin = mid+1;
         } else {
@@ -93,15 +89,14 @@ __device__ int binary_search(float freq, int lower, int upper){
 }
 
 
-__global__ void find_block_indices(int *lower, int *upper, int texlen,
-                                   float df, float flow, float fmax){
+__global__ void find_block_indices(int *lower, int *upper, int arrlen, float df, float flow, float fmax, const float* freq_array){
 
     /*
 
       Input parameters:
       =================
 
-      texlen: The length of the sample frequency texture
+      arrlen: The length of the sample frequency texture
 
       df:     The difference between successive frequencies in the
               output array
@@ -109,10 +104,8 @@ __global__ void find_block_indices(int *lower, int *upper, int texlen,
       flow:   The minimum frequency at which to generate an interpolated
               waveform
 
-      Global variable:
-      ===================
+      freq_array: sample frequencies
 
-      freq_tex: Texture of sample frequencies (its length is texlen)
 
       Output parameters:
       ==================
@@ -138,16 +131,19 @@ __global__ void find_block_indices(int *lower, int *upper, int texlen,
        ffirst = flow;
     }
 
-    lower[i] = binary_search(ffirst, 0, texlen);
-    upper[i] = binary_search(flast, 0, texlen) + 1;
+    lower[i] = binary_search(ffirst, 0, arrlen, freq_array);
+    upper[i] = binary_search(flast, 0, arrlen, freq_array) + 1;
 
     return;
 }
 
 
 __global__ void linear_interp(float2 *h, float df, int hlen,
-                              float flow, float fmax, int texlen,
-                              int *lower, int *upper){
+                              float flow, float fmax, int arrlen,
+                              int *lower, int *upper,
+                              const float* freq_array,
+                              const float* amp_array,
+                              const float* phase_array){
 
     /*
 
@@ -163,9 +159,9 @@ __global__ void linear_interp(float2 *h, float df, int hlen,
               waveform
 
       fmax:   The maximum frequency in the sample frequency texture; i.e.,
-              freq_tex[texlen-1]
+              freq_tex[arrlen-1]
 
-      texlen: The common length of the three sample textures
+      arrlen: The common length of the three sample textures
 
       lower:  Array that for each thread block stores the index into the
               sample frequency array of the largest sample frequency that
@@ -177,14 +173,11 @@ __global__ void linear_interp(float2 *h, float df, int hlen,
               is greater than the next frequency considered *after* that
               thread block.
 
-      Global variables:
-      ===================
+      freq_array:  Array of sample frequencies (its length is arrlen)
 
-      freq_tex:  Texture of sample frequencies (its length is texlen)
+      amp_array:   Array of amplitudes corresponding to sample frequencies
 
-      amp_tex:   Texture of amplitudes corresponding to sample frequencies
-
-      phase_tex: Texture of phases corresponding to sample frequencies
+      phase_array: Array of phases corresponding to sample frequencies
 
 
       Output parameters:
@@ -220,22 +213,22 @@ __global__ void linear_interp(float2 *h, float df, int hlen,
           tmp.x = 0.0;
           tmp.y = 0.0;
         } else {
-          idx = binary_search(freq, low[0], high[0]);
-          if (idx < texlen-1) {
-              f0 = tex1Dfetch(freq_tex, idx);
-              f1 = tex1Dfetch(freq_tex, idx+1);
+          idx = binary_search(freq, low[0], high[0], freq_array);
+          if (idx < arrlen-1) {
+              f0 = freq_array[idx];
+              f1 = freq_array[idx+1];
               inv_df = 1.0/(f1-f0);
-              a0 = tex1Dfetch(amp_tex, idx);
-              a1 = tex1Dfetch(amp_tex, idx+1);
-              p0 = tex1Dfetch(phase_tex, idx);
-              p1 = tex1Dfetch(phase_tex, idx+1);
+              a0 = amp_array[idx];
+              a1 = amp_array[idx + 1];
+              p0 = phase_array[idx];
+              p1 = phase_array[idx + 1];
               amp = a0*inv_df*(f1-freq) + a1*inv_df*(freq-f0);
               phase = p0*inv_df*(f1-freq) + p1*inv_df*(freq-f0);
           } else {
-             // We must have idx = texlen-1, so this frequency
+             // We must have idx = arrlen-1, so this frequency
              // exactly equals fmax
-             amp = tex1Dfetch(amp_tex, idx);
-             phase = tex1Dfetch(phase_tex, idx);
+             amp = amp_array[idx];
+             phase = phase_array[idx];
           }
           __sincosf(phase, &y, &x);
           tmp.x = amp*x;
@@ -247,6 +240,7 @@ __global__ void linear_interp(float2 *h, float df, int hlen,
 
     return;
 
+}
 }
 """)
 
@@ -262,48 +256,36 @@ def get_dckernel(slen):
     try:
         return dckernel_cache[nb]
     except KeyError:
-        mod = SourceModule(kernel_sources.render(ntpb=nt, nblocks=nb))
-        freq_tex = mod.get_texref("freq_tex")
-        amp_tex = mod.get_texref("amp_tex")
-        phase_tex = mod.get_texref("phase_tex")
+        mod = RawModule(code=kernel_sources.render(ntpb=nt, nblocks=nb))
         fn1 = mod.get_function("find_block_indices")
-        fn1.prepare("PPifff", texrefs=[freq_tex])
         fn2 = mod.get_function("linear_interp")
-        fn2.prepare("PfiffiPP", texrefs=[freq_tex, amp_tex, phase_tex])
-        dckernel_cache[nb] = (fn1, fn2, freq_tex, amp_tex, phase_tex, nt, nb)
+        dckernel_cache[nb] = (fn1, fn2, nt, nb)
         return dckernel_cache[nb]
 
 class CUDALinearInterpolate(object):
     def __init__(self, output):
-        self.output = output.data.gpudata
+        self.output = output.data.data.ptr
         self.df = numpy.float32(output.delta_f)
         self.hlen = numpy.int32(len(output))
         lookups = get_dckernel(self.hlen)
         self.fn1 = lookups[0]
         self.fn2 = lookups[1]
-        self.freq_tex = lookups[2]
-        self.amp_tex = lookups[3]
-        self.phase_tex = lookups[4]
-        self.nt = lookups[5]
-        self.nb = lookups[6]
-        self.lower = zeros(self.nb, dtype=numpy.int32).data.gpudata
-        self.upper = zeros(self.nb, dtype=numpy.int32).data.gpudata
+        self.nt = lookups[3]
+        self.nb = lookups[4]
+        self.lower = zeros(self.nb, dtype=numpy.int32).data.data.ptr
+        self.upper = zeros(self.nb, dtype=numpy.int32).data.data.ptr
 
     def interpolate(self, flow, freqs, amps, phases):
         flow = numpy.float32(flow)
-        texlen = numpy.int32(len(freqs))
-        fmax = numpy.float32(freqs[texlen-1])
-        freqs_gpu = gpuarray.to_gpu(freqs)
-        freqs_gpu.bind_to_texref_ext(self.freq_tex, allow_offset=False)
-        amps_gpu = gpuarray.to_gpu(amps)
-        amps_gpu.bind_to_texref_ext(self.amp_tex, allow_offset=False)
-        phases_gpu = gpuarray.to_gpu(phases)
-        phases_gpu.bind_to_texref_ext(self.phase_tex, allow_offset=False)
-        fn1 = self.fn1.prepared_call
-        fn2 = self.fn2.prepared_call
-        fn1((1, 1), (self.nb, 1, 1), self.lower, self.upper, texlen, self.df, flow, fmax)
-        fn2((self.nb, 1), (self.nt, 1, 1), self.output, self.df, self.hlen, flow, fmax, texlen, self.lower, self.upper)
-        pycbc.scheme.mgr.state.context.synchronize()
+        arrlen = numpy.int32(len(freqs))
+        fmax = numpy.float32(freqs[arrlen-1])
+        freqs_gpu = cp.asarray(freqs)
+        amps_gpu = cp.asarray(amps)
+        phases_gpu = cp.asarray(phases)
+
+        self.fn1((1, 1), (self.nb, 1, 1), (self.lower, self.upper, arrlen, self.df, flow, fmax, freqs_gpu))
+        self.fn2((self.nb, 1), (self.nt, 1, 1),(self.output, self.df, self.hlen, flow, fmax, arrlen, self.lower, self.upper, freqs_gpu, amps_gpu, phases_gpu))
+        cp.cuda.runtime.deviceSynchronize()
         return
 
 def inline_linear_interp(amps, phases, freqs, output, df, flow, imin, start_index):
@@ -312,23 +294,18 @@ def inline_linear_interp(amps, phases, freqs, output, df, flow, imin, start_inde
     if output.precision == 'double':
         raise NotImplementedError("Double precision linear interpolation not currently supported on CUDA scheme")
     flow = numpy.float32(flow)
-    texlen = numpy.int32(len(freqs))
-    fmax = numpy.float32(freqs[texlen-1])
+    arrlen = numpy.int32(len(freqs))
+    fmax = numpy.float32(freqs[arrlen-1])
     hlen = numpy.int32(len(output))
-    (fn1, fn2, ftex, atex, ptex, nt, nb) = get_dckernel(hlen)
-    freqs_gpu = gpuarray.to_gpu(freqs)
-    freqs_gpu.bind_to_texref_ext(ftex, allow_offset=False)
-    amps_gpu = gpuarray.to_gpu(amps)
-    amps_gpu.bind_to_texref_ext(atex, allow_offset=False)
-    phases_gpu = gpuarray.to_gpu(phases)
-    phases_gpu.bind_to_texref_ext(ptex, allow_offset=False)
-    fn1 = fn1.prepared_call
-    fn2 = fn2.prepared_call
+    (fn1, fn2, nt, nb) = get_dckernel(hlen)
+    freqs_gpu = cp.asarray(freqs)
+    amps_gpu = cp.asarray(amps)
+    phases_gpu = cp.asarray(phases)
     df = numpy.float32(df)
-    g_out = output.data.gpudata
-    lower = zeros(nb, dtype=numpy.int32).data.gpudata
-    upper = zeros(nb, dtype=numpy.int32).data.gpudata
-    fn1((1, 1), (nb, 1, 1), lower, upper, texlen, df, flow, fmax)
-    fn2((nb, 1), (nt, 1, 1), g_out, df, hlen, flow, fmax, texlen, lower, upper)
-    pycbc.scheme.mgr.state.context.synchronize()
+    g_out = output.data.data.ptr
+    lower = zeros(nb, dtype=numpy.int32).data.data.ptr
+    upper = zeros(nb, dtype=numpy.int32).data.data.ptr
+    fn1((1, 1), (nb, 1, 1), (lower, upper, arrlen, df, flow, fmax, freqs_gpu))
+    fn2((nb, 1), (nt, 1, 1), (g_out, df, hlen, flow, fmax, arrlen, lower, upper, freqs_gpu, amps_gpu, phases_gpu))
+    cp.cuda.runtime.deviceSynchronize()
     return output

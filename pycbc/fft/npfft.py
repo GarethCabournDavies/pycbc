@@ -27,16 +27,11 @@ for the PyCBC package.
 """
 
 import logging
-
-import numpy
-
-logger = logging.getLogger('pycbc.events.npfft')
-
-import numpy.fft as np_fft
-from numpy import asarray
-
+import numpy.fft
 from .core import _check_fft_args
 from .core import _BaseFFT, _BaseIFFT
+
+logger = logging.getLogger('pycbc.events.npfft')
 
 _INV_FFT_MSG = ("I cannot perform an {} between data with an input type of "
                 "{} and an output type of {}")
@@ -45,17 +40,12 @@ def fft(invec, outvec, _, itype, otype):
     if invec.ptr == outvec.ptr:
         raise NotImplementedError("numpy backend of pycbc.fft does not "
                                   "support in-place transforms")
-    print(invec.dtype)
-    print(itype)
-    print(outvec.dtype)
-    print(len(outvec))
-    print(otype)
     if itype == 'complex' and otype == 'complex':
-        outvec.data[:] = asarray(np_fft.fft(invec.data),
-                                 dtype=outvec.dtype)
+        outvec.data[:] = numpy.asarray(numpy.fft.fft(invec.data),
+                                       dtype=outvec.dtype)
     elif itype == 'real' and otype == 'complex':
-        outvec.data[:] = asarray(np_fft.rfft(invec.data),
-                                 dtype=outvec.dtype)
+        outvec.data[:] = numpy.asarray(numpy.fft.rfft(invec.data),
+                                       dtype=outvec.dtype)
     else:
         raise ValueError(_INV_FFT_MSG.format("FFT", itype, otype))
 
@@ -65,12 +55,12 @@ def ifft(invec, outvec, _, itype, otype):
         raise NotImplementedError("numpy backend of pycbc.fft does not "
                                   "support in-place transforms")
     if itype == 'complex' and otype == 'complex':
-        outvec.data[:] = asarray(np_fft.ifft(invec.data),
-                                 dtype=outvec.dtype)
+        outvec.data[:] = numpy.asarray(numpy.fft.ifft(invec.data),
+                                       dtype=outvec.dtype)
         outvec *= len(outvec)
     elif itype == 'complex' and otype == 'real':
-        outvec.data[:] = asarray(np_fft.irfft(invec.data,len(outvec)),
-                                 dtype=outvec.dtype)
+        outvec.data[:] = numpy.asarray(numpy.fft.irfft(invec.data,len(outvec)),
+                                       dtype=outvec.dtype)
         outvec *= len(outvec)
     else:
         raise ValueError(_INV_FFT_MSG.format("IFFT", itype, otype))

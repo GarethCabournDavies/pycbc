@@ -18,9 +18,9 @@
 import pycbc
 from .core import _list_available
 
-_backend_dict = {'cupy_scipy' : 'cufft',
-                 'cupy' : 'cupy'}
-_backend_list = ['cupy', 'cupy_scipy']
+_backend_dict = {'cuda' : 'cufft',
+                 'pyfft' : 'cuda_pyfft'}
+_backend_list = ['cuda','pyfft']
 
 _alist = []
 _adict = {}
@@ -38,7 +38,6 @@ def set_backend(backend_list):
             break
 
 def get_backend():
-    print(_adict[cuda_backend])
     return _adict[cuda_backend]
 
 set_backend(_backend_list)

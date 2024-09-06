@@ -189,7 +189,7 @@ try:
     except OSError:
         pass
 
-    # Check that pycuda is installed and can talk to the driver
+    # Check that cupy is installed
     import cupy as cp
 
     HAVE_CUDA=True

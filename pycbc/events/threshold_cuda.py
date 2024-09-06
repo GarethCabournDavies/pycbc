@@ -23,47 +23,83 @@
 #
 import logging
 import numpy, mako.template
-from pycuda.tools import dtype_to_ctype
-from pycuda.elementwise import ElementwiseKernel
-from pycuda.compiler import SourceModule
+import cupy as cp
+#from pycuda.tools import dtype_to_ctype
+#from pycuda.elementwise import ElementwiseKernel
+#from pycuda.compiler import SourceModule
 from .eventmgr import _BaseThresholdCluster
 import pycbc.scheme
 
 logger = logging.getLogger('pycbc.events.threshold_cuda')
 
-threshold_op = """
-    if (i == 0)
-        bn[0] = 0;
+#threshold_op = """
+#    if (i == 0)
+#        bn[0] = 0;
+#
+#    pycuda::complex<float> val = in[i];
+#    if ( abs(val) > threshold){
+#        int n_w = atomicAdd(bn, 1);
+#        outv[n_w] = val;
+#        outl[n_w] = i;
+#    }
+#
+#"""
 
-    pycuda::complex<float> val = in[i];
-    if ( abs(val) > threshold){
-        int n_w = atomicAdd(bn, 1);
-        outv[n_w] = val;
-        outl[n_w] = i;
+#threshold_kernel = ElementwiseKernel(
+#            " %(tp_in)s *in, %(tp_out1)s *outv, %(tp_out2)s *outl, %(tp_th)s threshold, %(tp_n)s *bn" % {
+#                "tp_in": dtype_to_ctype(numpy.complex64),
+#                "tp_out1": dtype_to_ctype(numpy.complex64),
+#                "tp_out2": dtype_to_ctype(numpy.uint32),
+#                "tp_th": dtype_to_ctype(numpy.float32),
+#                "tp_n": dtype_to_ctype(numpy.uint32),
+#                },
+#            threshold_op,
+#            "getstuff")
+
+threshold_op = r"""
+extern "C" __global__ void getstuff(const float2* in, float2* outv, unsigned int* outl, float threshold, unsigned int* bn) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // Initialize count at the start
+    if (i == 0) {
+        bn[0] = 0;
     }
 
+    __syncthreads(); // Ensure bn[0] is initialized before processing
+
+    if (i < blockDim.x * gridDim.x) { // Check array bounds
+        float2 val = in[i];
+        float abs_val = sqrtf(val.x * val.x + val.y * val.y);  // Compute absolute value
+
+        if (abs_val > threshold) {
+            int n_w = atomicAdd(bn, 1);  // Atomically increment the count
+            outv[n_w] = val;             // Store the value exceeding the threshold
+            outl[n_w] = i;               // Store the index
+        }
+    }
+}
 """
 
-threshold_kernel = ElementwiseKernel(
-            " %(tp_in)s *in, %(tp_out1)s *outv, %(tp_out2)s *outl, %(tp_th)s threshold, %(tp_n)s *bn" % {
-                "tp_in": dtype_to_ctype(numpy.complex64),
-                "tp_out1": dtype_to_ctype(numpy.complex64),
-                "tp_out2": dtype_to_ctype(numpy.uint32),
-                "tp_th": dtype_to_ctype(numpy.float32),
-                "tp_n": dtype_to_ctype(numpy.uint32),
-                },
-            threshold_op,
-            "getstuff")
+# Compile the kernel
+module = cp.RawModule(code=threshold_op)
+threshold_kernel = module.get_function('getstuff')
 
-import pycuda.driver as drv
-n = drv.pagelocked_empty((1), numpy.uint32, mem_flags=drv.host_alloc_flags.DEVICEMAP)
-nptr = numpy.intp(n.base.get_device_pointer())
+# Allocate device memory
+#n = cp.cuda.alloc_pinned_memory(1 * cp.uint32().itemsize)
+#nptr = cp.cuda.MemoryPointer(n, 0)
+# Allocate device memory
+n = cp.zeros((1), dtype=cp.uint32)
+nptr = n.data.ptr
 
-val = drv.pagelocked_empty((4096*256), numpy.complex64, mem_flags=drv.host_alloc_flags.DEVICEMAP)
-vptr = numpy.intp(val.base.get_device_pointer())
+#val = cp.cuda.alloc_pinned_memory(4096 * 256 * cp.complex64().itemsize)
+#vptr = cp.cuda.MemoryPointer(val, 0)
+val = cp.zeros((4096 * 256), dtype=cp.complex64)
+vptr = val.data.ptr
 
-loc = drv.pagelocked_empty((4096*256), numpy.int32, mem_flags=drv.host_alloc_flags.DEVICEMAP)
-lptr = numpy.intp(loc.base.get_device_pointer())
+#loc = cp.cuda.alloc_pinned_memory(4096 * 256 * cp.int32().itemsize)
+#lptr = cp.cuda.MemoryPointer(loc, 0)
+loc = cp.zeros((4096 * 256), dtype=cp.int32)
+lptr = loc.data.ptr
 
 class T():
     pass
@@ -77,7 +113,7 @@ tl.gpudata = lptr
 tn.flags = tv.flags = tl.flags = n.flags
 
 tkernel1 = mako.template.Template("""
-#include <stdio.h>
+#include <cupy/cuda/cupy_cuda.h>
 
 __global__ void threshold_and_cluster(float2* in, float2* outv, int* outl, int window, float threshold){
     int s = window * blockIdx.x;
@@ -179,7 +215,7 @@ __global__ void threshold_and_cluster(float2* in, float2* outv, int* outl, int w
 """)
 
 tkernel2 = mako.template.Template("""
-#include <stdio.h>
+#include <cupy/cuda/cupy_cuda.h>
 __global__ void threshold_and_cluster2(float2* outv, int* outl, float threshold, int window){
     __shared__ int loc[${blocks}];
     __shared__ float val[${blocks}];
@@ -231,12 +267,10 @@ def get_tkernel(slen, window):
     try:
         return tfn_cache[(nt, nb)], nt, nb
     except KeyError:
-        mod = SourceModule(tkernel1.render(chunk=nt))
-        mod2 = SourceModule(tkernel2.render(blocks=nb))
+        mod = cp.RawModule(tkernel1.render(chunk=nt))
+        mod2 = cp.RawModule(tkernel2.render(blocks=nb))
         fn = mod.get_function("threshold_and_cluster")
-        fn.prepare("PPPif")
         fn2 = mod2.get_function("threshold_and_cluster2")
-        fn2.prepare("PPfi")
         tfn_cache[(nt, nb)] = (fn, fn2)
         return tfn_cache[(nt, nb)], nt, nb
 
@@ -244,7 +278,7 @@ def threshold_and_cluster(series, threshold, window):
     outl = tl.gpudata
     outv = tv.gpudata
     slen = len(series)
-    series = series.data.gpudata
+    series = series.data.data.ptr
     (fn, fn2), nt, nb = get_tkernel(slen, window)
     threshold = numpy.float32(threshold * threshold)
     window = numpy.int32(window)
@@ -260,7 +294,7 @@ def threshold_and_cluster(series, threshold, window):
 
 class CUDAThresholdCluster(_BaseThresholdCluster):
     def __init__(self, series):
-        self.series = series.data.gpudata
+        self.series = series.data.data.ptr
 
         self.outl = tl.gpudata
         self.outv = tv.gpudata

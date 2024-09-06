@@ -46,16 +46,45 @@ from .core import _BaseFFT, _BaseIFFT
 # No need for separate forward and inverse plan functions.
 # Use get_fft_plan for both forward and inverse FFTs when necessary.
 
-def fft(invec, outvec, prec, itype, otype):
-    # Create a plan for FFT
-    with get_fft_plan(invec.data) as plan:
-        print(cu_fft.fft(invec.data))
-        outvec[:] = cupy.asarray(cu_fft.fft(invec.data), dtype=otype)
+#def fft(invec, outvec, prec, itype, otype):
+#    # Create a plan for FFT
+#    with get_fft_plan(invec.data) as plan:
+#        print(cu_fft.fft(invec.data))
+#        outvec.data[:] = cupy.asarray(cu_fft.fft(invec.data), dtype=otype)
+#
+#def ifft(invec, outvec, prec, itype, otype):
+#    # Create a plan for IFFT
+#    with get_fft_plan(invec.data) as plan:
+#        outvec[:] = cupy.asarray(cu_fft.ifft(invec.data), dtype=otype)
 
-def ifft(invec, outvec, prec, itype, otype):
-    # Create a plan for IFFT
-    with get_fft_plan(invec.data) as plan:
-        outvec[:] = cupy.asarray(cu_fft.ifft(invec.data), dtype=otype)
+def fft(invec, outvec, _, itype, otype):
+    if invec.ptr == outvec.ptr:
+        raise NotImplementedError("cupy backend of pycbc.fft does not "
+                                  "support in-place transforms")
+    if itype == 'complex' and otype == 'complex':
+        outvec.data[:] = cupy.asarray(cupy.fft.fft(invec.data),
+                                       dtype=outvec.dtype)
+    elif itype == 'real' and otype == 'complex':
+        outvec.data[:] = cupy.asarray(cupy.fft.rfft(invec.data),
+                                       dtype=outvec.dtype)
+    else:
+        raise ValueError(_INV_FFT_MSG.format("FFT", itype, otype))
+
+
+def ifft(invec, outvec, _, itype, otype):
+    if invec.ptr == outvec.ptr:
+        raise NotImplementedError("cupy backend of pycbc.fft does not "
+                                  "support in-place transforms")
+    if itype == 'complex' and otype == 'complex':
+        outvec.data[:] = cupy.asarray(cupy.fft.ifft(invec.data),
+                                       dtype=outvec.dtype)
+        outvec *= len(outvec)
+    elif itype == 'complex' and otype == 'real':
+        outvec.data[:] = cupy.asarray(cupy.fft.irfft(invec.data,len(outvec)),
+                                       dtype=outvec.dtype)
+        outvec *= len(outvec)
+    else:
+        raise ValueError(_INV_FFT_MSG.format("IFFT", itype, otype))
 
 class FFT(_BaseFFT):
     def __init__(self, invec, outvec, nbatch=1, size=None):
