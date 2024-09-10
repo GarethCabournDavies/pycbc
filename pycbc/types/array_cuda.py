@@ -21,341 +21,159 @@
 #
 # =============================================================================
 #
-"""Pycuda based 
+"""CuPy based GPU backend for PyCBC Array
 """
-import pycuda.driver
-from pycuda.elementwise import ElementwiseKernel
-from pycuda.reduction import ReductionKernel
-from pycuda.tools import get_or_register_dtype
-from pycuda.tools import context_dependent_memoize
-from pycuda.tools import dtype_to_ctype
-from pytools import match_precision
-from pycuda.gpuarray import _get_common_dtype, empty, GPUArray
-import pycuda.gpuarray
-from pycuda.scan import InclusiveScanKernel
-import numpy as np
+import cupy as _cp
+from pycbc.types.array import common_kind, complex128, float64
+from . import aligned as _algn
+from scipy.linalg import blas
+from pycbc.types import real_same_precision_as
+#cimport cython, numpy
 
-include_complex = """
-#include <pycuda-complex.hpp>
-"""
+def zeros(length, dtype=_cp.float64):
+    return _cp.zeros(length, dtype=dtype)
 
-@context_dependent_memoize
-def get_cumsum_kernel(dtype):
-    return InclusiveScanKernel(dtype, "a+b", preamble=include_complex)
-
-def icumsum(vec):
-    krnl = get_cumsum_kernel(vec.dtype)
-    return krnl(vec)
-
-@context_dependent_memoize
-def call_prepare(self, sz, allocator):
-    MAX_BLOCK_COUNT = 1024
-    SMALL_SEQ_COUNT = 4        
-
-    if sz <= self.block_size*SMALL_SEQ_COUNT*MAX_BLOCK_COUNT:
-        total_block_size = SMALL_SEQ_COUNT*self.block_size
-        block_count = (sz + total_block_size - 1) // total_block_size
-        seq_count = SMALL_SEQ_COUNT
-    else:
-        block_count = MAX_BLOCK_COUNT
-        macroblock_size = block_count*self.block_size
-        seq_count = (sz + macroblock_size - 1) // macroblock_size
-
-    if block_count == 1:
-        result = empty((), self.dtype_out, allocator)
-    else:
-        result = empty((block_count,), self.dtype_out, allocator)
-
-    grid_size = (block_count, 1)
-    block_size =  (self.block_size, 1, 1)
-
-    return result, block_count, seq_count, grid_size, block_size
-
-class LowerLatencyReductionKernel(ReductionKernel):
-    def __init__(self, dtype_out,
-                 neutral, reduce_expr, map_expr=None, arguments=None,
-                 name="reduce_kernel", keep=False, options=None, preamble=""):
-        ReductionKernel.__init__(self, dtype_out,
-                                 neutral, reduce_expr, map_expr, arguments,
-                                 name, keep, options, preamble)
-
-        self.shared_size=self.block_size*self.dtype_out.itemsize
-
-
-    def __call__(self, *args, **kwargs):
-        f = self.stage1_func
-        s1_invocation_args = [] 
-        for arg in args:
-            s1_invocation_args.append(arg.gpudata)
-        sz = args[0].size
-
-        result, block_count, seq_count, grid_size, block_size = call_prepare(self, sz, args[0].allocator)
-
-        f(grid_size, block_size, None,
-                *([result.gpudata]+s1_invocation_args+[seq_count, sz]),
-                shared_size=self.shared_size)
-
-        while True:
-            f = self.stage2_func
-            sz = result.size
-            result2 = result
-            result, block_count, seq_count, grid_size, block_size = call_prepare(self, sz, args[0].allocator)
-
-            f(grid_size, block_size, None,
-                    *([result.gpudata, result2.gpudata]+s1_invocation_args+[seq_count, sz]),
-                    shared_size=self.shared_size)
-
-            if block_count == 1:
-                return result
-
-
-
-@context_dependent_memoize
-def get_norm_kernel(dtype_x, dtype_out):
-    return ElementwiseKernel(
-            "%(tp_x)s *x, %(tp_z)s *z" % {
-                "tp_x": dtype_to_ctype(dtype_x),
-                "tp_z": dtype_to_ctype(dtype_out),
-                },
-            "z[i] = norm(x[i])",
-            "normalize")
-
-def squared_norm(self):
-    a = self.data
-    dtype_out = match_precision(np.dtype('float64'), a.dtype)
-    out = a._new_like_me(dtype=dtype_out)
-    krnl = get_norm_kernel(a.dtype, dtype_out)
-    krnl(a, out)
-    return out     
-
-# FIXME: Write me!
-#def multiply_and_add(self, other, mult_fac):
-#    """
-#    Return other multiplied by mult_fac and with self added.
-#    Self will be modified in place. This requires all inputs to be of the same
-#    precision.
-#    """
- 
-@context_dependent_memoize
-def get_weighted_inner_kernel(dtype_x, dtype_y, dtype_w, dtype_out):
-    if (dtype_x == np.complex64) or (dtype_x == np.complex128):
-        inner_map="conj(x[i])*y[i]/w[i]"
-    else:
-        inner_map="x[i]*y[i]/w[i]"       
-    return LowerLatencyReductionKernel(dtype_out,
-            neutral="0",
-            arguments="%(tp_x)s *x, %(tp_y)s *y,  %(tp_w)s *w" % {
-                "tp_x": dtype_to_ctype(dtype_x),
-                "tp_y": dtype_to_ctype(dtype_y),
-                "tp_w": dtype_to_ctype(dtype_w),
-                },
-            reduce_expr="a+b",
-            map_expr=inner_map,
-            name="weighted_inner")
-
-@context_dependent_memoize
-def get_inner_kernel(dtype_x, dtype_y, dtype_out):
-    if (dtype_x == np.complex64) or (dtype_x == np.complex128):
-        inner_map="conj(x[i])*y[i]"
-    else:
-        inner_map="x[i]*y[i]"           
-    return LowerLatencyReductionKernel(dtype_out,
-            neutral="0",
-            arguments="%(tp_x)s *x, %(tp_y)s *y" % {
-                "tp_x": dtype_to_ctype(dtype_x),
-                "tp_y": dtype_to_ctype(dtype_y),
-                },
-            reduce_expr="a+b",
-            map_expr=inner_map,
-            name="inner")
-
-def inner(self, b):
-    a = self.data
-    dtype_out = _get_common_dtype(a,b)
-    krnl = get_inner_kernel(a.dtype, b.dtype, dtype_out)
-    return krnl(a, b).get().max()
-    
-vdot = inner
-
-def weighted_inner(self, b, w):
-    if w is None:
-        return self.inner(b)  
-    a = self.data
-    dtype_out = _get_common_dtype(a, b)
-    krnl = get_weighted_inner_kernel(a.dtype, b.dtype, w.dtype, dtype_out)
-    return krnl(a, b, w).get().max()
-
-# Define PYCUDA MAXLOC for both single and double precission ################## 
-       
-maxloc_preamble = """
-
-    struct MAXLOCN{
-        TTYPE max;
-        LTYPE   loc;
-        
-        __device__
-        MAXLOCN(){}
-        
-        __device__
-        MAXLOCN(MAXLOCN const &src): max(src.max), loc(src.loc){}
-        __device__
-        MAXLOCN(MAXLOCN const volatile &src): max(src.max), loc(src.loc){}
-        
-        __device__
-        MAXLOCN volatile &operator=( MAXLOCN const &src) volatile{
-            max = src.max;
-            loc = src.loc;
-            return *this;
-        }
-    };
-    
-    __device__
-    MAXLOCN maxloc_red(MAXLOCN a, MAXLOCN b){
-        if (a.max > b.max)
-            return a;
-        else 
-            return b;  
-    }
-    
-    __device__
-    MAXLOCN maxloc_start(){
-        MAXLOCN t;
-        t.max=0;
-        t.loc=0;
-        return t;
-    }
-    
-    __device__
-    MAXLOCN maxloc_map(TTYPE val, LTYPE loc){
-        MAXLOCN t;
-        t.max = val;
-        t.loc = loc;
-        return t;
-    }
-
-    """
-    
-maxloc_preamble_single = """
-    #define MAXLOCN maxlocs
-    #define TTYPE float
-    #define LTYPE int
-""" + maxloc_preamble
-
-maxloc_preamble_double = """
-    #define MAXLOCN maxlocd
-    #define TTYPE double
-    #define LTYPE long
-""" + maxloc_preamble
-    
-maxloc_dtype_double = np.dtype([("max", np.float64), ("loc", np.int64)])
-maxloc_dtype_single = np.dtype([("max", np.float32), ("loc", np.int32)])
-
-maxloc_dtype_single = get_or_register_dtype("maxlocs", dtype=maxloc_dtype_single)
-maxloc_dtype_double = get_or_register_dtype("maxlocd", dtype=maxloc_dtype_double)
-
-mls = LowerLatencyReductionKernel(maxloc_dtype_single, neutral = "maxloc_start()",
-        reduce_expr="maxloc_red(a, b)", map_expr="maxloc_map(x[i], i)",
-        arguments="float *x", preamble=maxloc_preamble_single)
-
-mld = LowerLatencyReductionKernel(maxloc_dtype_double, neutral = "maxloc_start()",
-        reduce_expr="maxloc_red(a, b)", map_expr="maxloc_map(x[i], i)",
-        arguments="double *x", preamble=maxloc_preamble_double)
-        
-max_loc_map = {'single':mls,'double':mld}
-
-
-amls = LowerLatencyReductionKernel(maxloc_dtype_single, neutral = "maxloc_start()",
-        reduce_expr="maxloc_red(a, b)", map_expr="maxloc_map(abs(x[i]), i)",
-        arguments="float *x", preamble=maxloc_preamble_single)
-
-amld = LowerLatencyReductionKernel(maxloc_dtype_double, neutral = "maxloc_start()",
-        reduce_expr="maxloc_red(a, b)", map_expr="maxloc_map(abs(x[i]), i)",
-        arguments="double *x", preamble=maxloc_preamble_double)
-
-amlsc = LowerLatencyReductionKernel(maxloc_dtype_single, neutral = "maxloc_start()",
-        reduce_expr="maxloc_red(a, b)", map_expr="maxloc_map(abs(x[i]), i)",
-        arguments="pycuda::complex<float> *x", preamble=maxloc_preamble_single)
-
-amldc = LowerLatencyReductionKernel(maxloc_dtype_double, neutral = "maxloc_start()",
-        reduce_expr="maxloc_red(a, b)", map_expr="maxloc_map(abs(x[i]), i)",
-        arguments="pycuda::complex<double> *x", preamble=maxloc_preamble_double)
-
-abs_max_loc_map = {'single':{ 'real':amls, 'complex':amlsc }, 'double':{ 'real':amld, 'complex':amldc }}
-
-def zeros(length, dtype=np.float64):
-    result = GPUArray(length, dtype=dtype)
-    nwords = result.nbytes / 4
-    pycuda.driver.memset_d32(result.gpudata, 0, nwords)
-    return result
+def empty(length, dtype=_cp.float64):
+    return _algn.empty(length, dtype=dtype)
 
 def ptr(self):
-    return self._data.ptr
+    return self.data.data.ptr
 
 def dot(self, other):
-    return pycuda.gpuarray.dot(self._data,other).get().max()
+    return _cp.dot(self._data,other)
 
 def min(self):
-    return pycuda.gpuarray.min(self._data).get().max()
+    return self.data.min()
 
 def abs_max_loc(self):
-    maxloc = abs_max_loc_map[self.precision][self.kind](self._data)
-    maxloc = maxloc.get()
-    return float(maxloc['max']),int(maxloc['loc'])
+    if self.kind == 'real':
+        tmp = abs(self.data)
+        ind = _cp.argmax(tmp)
+        return tmp[ind], ind
+    else:
+        tmp = self.data.real ** 2.0
+        tmp += self.data.imag ** 2.0
+        ind = _cp.argmax(tmp)
+        return tmp[ind] ** 0.5, ind
 
 def cumsum(self):
-    tmp = self.data*1
-    return icumsum(tmp)
+    return self.data.cumsum()
 
 def max(self):
-    return pycuda.gpuarray.max(self._data).get().max()
+    return self.data.max()
 
 def max_loc(self):
-    maxloc = max_loc_map[self.precision](self._data)
-    maxloc = maxloc.get()
-    return float(maxloc['max']),int(maxloc['loc'])
-    
+    ind = _cp.argmax(self.data)
+    return self.data[ind], ind
+
 def take(self, indices):
-    if not isinstance(indices, pycuda.gpuarray.GPUArray):
-        indices = pycuda.gpuarray.to_gpu(indices)
-    return pycuda.gpuarray.take(self.data, indices)
-    
-def numpy(self):
-    return self._data.get()
-     
-def _copy(self, self_ref, other_ref):
-    if (len(other_ref) <= len(self_ref)) :
-        from pycuda.elementwise import get_copy_kernel
-        func = get_copy_kernel(self.dtype, other_ref.dtype)
-        func.prepared_async_call(self_ref._grid, self_ref._block, None,
-                self_ref.gpudata, other_ref.gpudata,
-                self_ref.mem_size)
+    return self.data.take(indices)
+
+def weighted_inner(self, other, weight):
+    """ Return the inner product of the array with complex conjugation.
+    """
+    if weight is None:
+        return self.inner(other)
+
+    cdtype = common_kind(self.dtype, other.dtype)
+    if cdtype.kind == 'c':
+        acum_dtype = complex128
     else:
-        raise RuntimeError("The arrays must the same length")
+        acum_dtype = float64
+
+    return _cp.sum(self.data.conj() * other / weight, dtype=acum_dtype)
+
+def inner_real(a, b):
+    """
+    Computes the dot product of two 1D arrays (a and b) using CuPy.
+    """
+    if a.shape != b.shape:
+        raise ValueError("Input arrays must have the same shape.")
+
+    # Perform dot product using CuPy
+    total = _cp.dot(a, b)
+
+    # Return the result to the host
+    return total.item()
+
+def abs_arg_max(self):
+    return _cp.argmax(_cp.abs(self.data))
+
+def inner(self, other):
+    """ Return the inner product of the array with complex conjugation.
+    """
+    cdtype = common_kind(self.dtype, other.dtype)
+    if cdtype.kind == 'c':
+        return _cp.sum(self.data.conj() * other, dtype=complex128)
+    else:
+        return inner_real(self.data, other)
+
+def vdot(self, other):
+    """ Return the inner product of the array with complex conjugation.
+    """
+    return _cp.vdot(self.data, other)
+
+def squared_norm(self):
+    """ Return the elementwise squared norm of the array """
+    return (self.data.real**2 + self.data.imag**2)
+
+_blas_mandadd_funcs = {}
+_blas_mandadd_funcs[_cp.float32] = blas.saxpy
+_blas_mandadd_funcs[_cp.float64] = blas.daxpy
+_blas_mandadd_funcs[_cp.complex64] = blas.caxpy
+_blas_mandadd_funcs[_cp.complex128] = blas.zaxpy
+
+def multiply_and_add(self, other, mult_fac):
+    """
+    Return other multiplied by mult_fac and with self added.
+    Self will be modified in place. This requires all inputs to be of the same
+    precision.
+    """
+    # Sanity checking should have already be done. But we don't know if
+    # mult_fac and add_fac are arrays or scalars.
+    inpt = _cp.array(self.data, copy=False)
+    # For some reason, _checkother decorator returns other.data so we don't
+    # take .data here
+    other = _cp.array(other, copy=False)
+
+    assert(inpt.dtype == other.dtype)
+
+    blas_fnc = _blas_mandadd_funcs[inpt.dtype.type]
+    return blas_fnc(other, inpt, a=mult_fac)
+
+def numpy(self):
+    return _cp.asnumpy(self._data)
+
+def _copy(self, self_ref, other_ref):
+    self_ref[:] = other_ref[:]
 
 def _getvalue(self, index):
-    return self._data.get()[index]
-    
+    return self._data[index]
+
 def sum(self):
-    return pycuda.gpuarray.sum(self._data).get().max()
-    
+    if self.kind == 'real':
+        return float64(_cp.sum(self._data, dtype=float64))
+    else:
+        return complex128(_cp.sum(self._data, dtype=complex128))
+
 def clear(self):
-    n32 = self.data.nbytes / 4
-    pycuda.driver.memset_d32(self.data.gpudata, 0, n32)
-    
+    self[:] = 0
+
 def _scheme_matches_base_array(array):
-    if isinstance(array, pycuda.gpuarray.GPUArray):
+    if isinstance(array, _cp.ndarray):
         return True
     else:
         return False
 
 def _copy_base_array(array):
-    data = pycuda.gpuarray.GPUArray((array.size), array.dtype)
-    if len(array) > 0:
-        pycuda.driver.memcpy_dtod(data.gpudata, array.gpudata, array.nbytes)
+    # Create an empty CuPy array with the same size and dtype as the input array
+    data = _cp.empty_like(array)
+
+    # Perform a device-to-device copy if the array is not empty
+    if array.size > 0:
+        _cp.copyto(data, array)
+
     return data
 
 def _to_device(array):
-    return pycuda.gpuarray.to_gpu(array)
-    
-   
-   
+    return _cp.asarray(array)

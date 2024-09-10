@@ -23,47 +23,48 @@
 #
 import logging
 import numpy, mako.template
-from pycuda.tools import dtype_to_ctype
-from pycuda.elementwise import ElementwiseKernel
-from pycuda.compiler import SourceModule
+import cupy as cp
+#from pycuda.tools import dtype_to_ctype
+#from pycuda.elementwise import ElementwiseKernel
+#from pycuda.compiler import SourceModule
 from .eventmgr import _BaseThresholdCluster
 import pycbc.scheme
 
 logger = logging.getLogger('pycbc.events.threshold_cuda')
 
-threshold_op = """
+kernel_code = """
+extern "C" __global__
+void getstuff(const float2 *in, const float2 *outv, unsigned int *outl, float threshold, unsigned int *bn) {
     if (i == 0)
         bn[0] = 0;
 
-    pycuda::complex<float> val = in[i];
-    if ( abs(val) > threshold){
+    cuComplex val = in[i];
+    if ( cuCabsf(val) > threshold){
         int n_w = atomicAdd(bn, 1);
         outv[n_w] = val;
         outl[n_w] = i;
     }
-
+}
 """
 
-threshold_kernel = ElementwiseKernel(
-            " %(tp_in)s *in, %(tp_out1)s *outv, %(tp_out2)s *outl, %(tp_th)s threshold, %(tp_n)s *bn" % {
-                "tp_in": dtype_to_ctype(numpy.complex64),
-                "tp_out1": dtype_to_ctype(numpy.complex64),
-                "tp_out2": dtype_to_ctype(numpy.uint32),
-                "tp_th": dtype_to_ctype(numpy.float32),
-                "tp_n": dtype_to_ctype(numpy.uint32),
-                },
-            threshold_op,
-            "getstuff")
+threshold_kernel = cp.RawKernel(kernel_code, 'getstuff')
 
-import pycuda.driver as drv
-n = drv.pagelocked_empty((1), numpy.uint32, mem_flags=drv.host_alloc_flags.DEVICEMAP)
-nptr = numpy.intp(n.base.get_device_pointer())
+# Allocate device memory
+#n = cp.cuda.alloc_pinned_memory(1 * cp.uint32().itemsize)
+#nptr = cp.cuda.MemoryPointer(n, 0)
+# Allocate device memory
+n = cp.zeros((1), dtype=cp.uint32)
+nptr = n.data.ptr
 
-val = drv.pagelocked_empty((4096*256), numpy.complex64, mem_flags=drv.host_alloc_flags.DEVICEMAP)
-vptr = numpy.intp(val.base.get_device_pointer())
+#val = cp.cuda.alloc_pinned_memory(4096 * 256 * cp.complex64().itemsize)
+#vptr = cp.cuda.MemoryPointer(val, 0)
+val = cp.zeros((4096 * 256), dtype=cp.complex64)
+vptr = val.data.ptr
 
-loc = drv.pagelocked_empty((4096*256), numpy.int32, mem_flags=drv.host_alloc_flags.DEVICEMAP)
-lptr = numpy.intp(loc.base.get_device_pointer())
+#loc = cp.cuda.alloc_pinned_memory(4096 * 256 * cp.int32().itemsize)
+#lptr = cp.cuda.MemoryPointer(loc, 0)
+loc = cp.zeros((4096 * 256), dtype=cp.int32)
+lptr = loc.data.ptr
 
 class T():
     pass
@@ -76,17 +77,20 @@ tv.gpudata = vptr
 tl.gpudata = lptr
 tn.flags = tv.flags = tl.flags = n.flags
 
-tkernel1 = mako.template.Template("""
-#include <stdio.h>
+import cupy as cp
+import numpy as np
+from cupy import RawKernel
 
-__global__ void threshold_and_cluster(float2* in, float2* outv, int* outl, int window, float threshold){
+# Define the CUDA kernel source code
+threshold_kernel_source = """
+extern "C" __global__ void threshold_and_cluster(float2* in, float2* outv, int* outl, int window, float threshold){
     int s = window * blockIdx.x;
     int e = s + window;
 
-    // shared memory for chuck size candidates
-    __shared__ float svr[${chunk}];
-    __shared__ float svi[${chunk}];
-    __shared__ int sl[${chunk}];
+    // shared memory for chunk size candidates
+    __shared__ float svr[128]; // Adjust size as needed
+    __shared__ float svi[128];
+    __shared__ int sl[128];
 
     // shared memory for the warp size candidates
     __shared__ float svv[32];
@@ -98,7 +102,7 @@ __global__ void threshold_and_cluster(float2* in, float2* outv, int* outl, int w
     float re;
     float im;
 
-    // Iterate trought the entire window size chunk and find blockDim.x number
+    // Iterate through the entire window size chunk and find blockDim.x number
     // of candidates
     for (int i = s + threadIdx.x; i < e; i += blockDim.x){
         re = in[i].x;
@@ -120,9 +124,9 @@ __global__ void threshold_and_cluster(float2* in, float2* outv, int* outl, int w
     if (threadIdx.x < 32){
         int tl = threadIdx.x;
 
-        // Now that we have all the candiates for this chunk in shared memory
+        // Now that we have all the candidates for this chunk in shared memory
         // Iterate through in the warp size to reduce to 32 candidates
-        for (int i = threadIdx.x; i < ${chunk}; i += 32){
+        for (int i = threadIdx.x; i < 128; i += 32){
             re = svr[i];
             im = svi[i];
             if ((re * re + im * im) > (mvr * mvr + mvi * mvi)){
@@ -157,7 +161,6 @@ __global__ void threshold_and_cluster(float2* in, float2* outv, int* outl, int w
             idx[threadIdx.x] = idx[threadIdx.x + 2];
         }
 
-
         // Save the 1 candidate maximum and location to the output vectors
         if (threadIdx.x == 0){
             if (svv[threadIdx.x] < svv[threadIdx.x + 1]){
@@ -166,7 +169,7 @@ __global__ void threshold_and_cluster(float2* in, float2* outv, int* outl, int w
             }
 
             if (svv[0] > threshold){
-                tl = idx[0];
+                int tl = idx[0];
                 outv[blockIdx.x].x = svr[tl];
                 outv[blockIdx.x].y = svi[tl];
                 outl[blockIdx.x] = sl[tl];
@@ -176,13 +179,10 @@ __global__ void threshold_and_cluster(float2* in, float2* outv, int* outl, int w
         }
     }
 }
-""")
 
-tkernel2 = mako.template.Template("""
-#include <stdio.h>
-__global__ void threshold_and_cluster2(float2* outv, int* outl, float threshold, int window){
-    __shared__ int loc[${blocks}];
-    __shared__ float val[${blocks}];
+extern "C" __global__ void threshold_and_cluster2(float2* outv, int* outl, float threshold, int window){
+    __shared__ int loc[128]; // Adjust size as needed
+    __shared__ float val[128];
 
     int i = threadIdx.x;
 
@@ -194,27 +194,31 @@ __global__ void threshold_and_cluster2(float2* outv, int* outl, float threshold,
 
     val[i] = outv[i].x * outv[i].x + outv[i].y * outv[i].y;
 
-
     // Check right
-    if ( (i < (${blocks} - 1)) && (val[i + 1] > val[i]) ){
+    if ((i < (128 - 1)) && (val[i + 1] > val[i])){
         outl[i] = -1;
         return;
     }
 
     // Check left
-    if ( (i > 0) && (val[i - 1] > val[i]) ){
+    if ((i > 0) && (val[i - 1] > val[i])){
         outl[i] = -1;
         return;
     }
 }
-""")
+"""
 
-tfn_cache = {}
-def get_tkernel(slen, window):
-    if window < 32:
-        raise ValueError("GPU threshold kernel does not support a window smaller than 32 samples")
+# Compile the CUDA kernels
+raw_kernel = RawKernel(threshold_kernel_source, 'threshold_and_cluster')
+raw_kernel2 = RawKernel(threshold_kernel_source, 'threshold_and_cluster2')
 
-    elif window <= 4096:
+def threshold_and_cluster(series, threshold, window):
+    slen = len(series)
+    threshold = np.float32(threshold * threshold)
+    window = np.int32(window)
+    
+    # Determine block and grid sizes based on window size
+    if window <= 4096:
         nt = 128
     elif window <= 16384:
         nt = 256
@@ -223,65 +227,71 @@ def get_tkernel(slen, window):
     else:
         nt = 1024
 
-    nb = int(numpy.ceil(slen / float(window)))
+    nb = int(np.ceil(slen / float(window)))
 
     if nb > 1024:
         raise ValueError("More than 1024 blocks not supported yet")
 
-    try:
-        return tfn_cache[(nt, nb)], nt, nb
-    except KeyError:
-        mod = SourceModule(tkernel1.render(chunk=nt))
-        mod2 = SourceModule(tkernel2.render(blocks=nb))
-        fn = mod.get_function("threshold_and_cluster")
-        fn.prepare("PPPif")
-        fn2 = mod2.get_function("threshold_and_cluster2")
-        fn2.prepare("PPfi")
-        tfn_cache[(nt, nb)] = (fn, fn2)
-        return tfn_cache[(nt, nb)], nt, nb
+    # Prepare output arrays
+    outl = cp.zeros(nb, dtype=cp.int32)
+    outv = cp.zeros((nb,), dtype=cp.complex64)
+    series_gpu = cp.asarray(series, dtype=cp.complex64)
 
-def threshold_and_cluster(series, threshold, window):
-    outl = tl.gpudata
-    outv = tv.gpudata
-    slen = len(series)
-    series = series.data.gpudata
-    (fn, fn2), nt, nb = get_tkernel(slen, window)
-    threshold = numpy.float32(threshold * threshold)
-    window = numpy.int32(window)
+    # Launch the first kernel
+    raw_kernel((nb,), (nt,), (series_gpu, outv, outl, window, threshold))
+    
+    # Launch the second kernel
+    raw_kernel2((1,), (nb,), (outv, outl, threshold, window))
 
-    cl = loc[0:nb]
-    cv = val[0:nb]
+    # Synchronize
+    cp.cuda.Device().synchronize()
 
-    fn.prepared_call((nb, 1), (nt, 1, 1), series, outv, outl, window, threshold,)
-    fn2.prepared_call((1, 1), (nb, 1, 1), outv, outl, threshold, window)
-    pycbc.scheme.mgr.state.context.synchronize()
-    w = (cl != -1)
-    return cv[w], cl[w]
+    # Filter valid results
+    cl = cp.asnumpy(outl)
+    cv = cp.asnumpy(outv)
+    valid_indices = cl != -1
+    return cv[valid_indices], cl[valid_indices]
 
-class CUDAThresholdCluster(_BaseThresholdCluster):
+class CUDAThresholdCluster:
     def __init__(self, series):
-        self.series = series.data.gpudata
-
-        self.outl = tl.gpudata
-        self.outv = tv.gpudata
+        self.series = cp.asarray(series, dtype=cp.complex64)
+        self.outl = cp.zeros(len(series), dtype=cp.int32)
+        self.outv = cp.zeros((len(series),), dtype=cp.complex64)
         self.slen = len(series)
 
     def threshold_and_cluster(self, threshold, window):
-        threshold = numpy.float32(threshold * threshold)
-        window = numpy.int32(window)
+        threshold = np.float32(threshold * threshold)
+        window = np.int32(window)
+        
+        # Determine block and grid sizes based on window size
+        if window <= 4096:
+            nt = 128
+        elif window <= 16384:
+            nt = 256
+        elif window <= 32768:
+            nt = 512
+        else:
+            nt = 1024
 
-        (fn, fn2), nt, nb = get_tkernel(self.slen, window)
-        fn = fn.prepared_call
-        fn2 = fn2.prepared_call
-        cl = loc[0:nb]
-        cv = val[0:nb]
+        nb = int(np.ceil(self.slen / float(window)))
 
-        fn((nb, 1), (nt, 1, 1), self.series, self.outv, self.outl, window, threshold,)
-        fn2((1, 1), (nb, 1, 1), self.outv, self.outl, threshold, window)
-        pycbc.scheme.mgr.state.context.synchronize()
-        w = (cl != -1)
-        return cv[w], cl[w]
+        if nb > 1024:
+            raise ValueError("More than 1024 blocks not supported yet")
+
+        # Launch the first kernel
+        raw_kernel((nb,), (nt,), (self.series, self.outv, self.outl, window, threshold))
+        
+        # Launch the second kernel
+        raw_kernel2((1,), (nb,), (self.outv, self.outl, threshold, window))
+
+        # Synchronize
+        cp.cuda.Device().synchronize()
+
+        # Filter valid results
+        cl = cp.asnumpy(self.outl)
+        cv = cp.asnumpy(self.outv)
+        valid_indices = cl != -1
+        return cv[valid_indices], cl[valid_indices]
 
 def _threshold_cluster_factory(series):
     return CUDAThresholdCluster
-

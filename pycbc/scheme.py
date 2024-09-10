@@ -84,36 +84,38 @@ class Scheme(object):
         if Scheme is not None:
             Scheme._single = None
 
-_cuda_cleanup_list=[]
+#_cuda_cleanup_list=[]
 
-def register_clean_cuda(function):
-    _cuda_cleanup_list.append(function)
+#def register_clean_cuda(function):
+#    _cuda_cleanup_list.append(function)
 
-def clean_cuda(context):
-    #Before cuda context is destroyed, all item destructions dependent on cuda
-    # must take place. This calls all functions that have been registered
-    # with _register_clean_cuda() in reverse order
-    #So the last one registered, is the first one cleaned
-    _cuda_cleanup_list.reverse()
-    for func in _cuda_cleanup_list:
-        func()
-
-    context.pop()
-    from pycuda.tools import clear_context_caches
-    clear_context_caches()
+#def clean_cuda(context):
+#    #Before cuda context is destroyed, all item destructions dependent on cuda
+#    # must take place. This calls all functions that have been registered
+#    # with _register_clean_cuda() in reverse order
+#    #So the last one registered, is the first one cleaned
+#    _cuda_cleanup_list.reverse()
+#    for func in _cuda_cleanup_list:
+#        func()
+#
+#    context.pop()
+#    from pycuda.tools import clear_context_caches
+#    clear_context_caches()
 
 class CUDAScheme(Scheme):
     """Context that sets PyCBC objects to use a CUDA processing scheme. """
     def __init__(self, device_num=0):
         Scheme.__init__(self)
         if not pycbc.HAVE_CUDA:
-            raise RuntimeError("Install PyCUDA to use CUDA processing")
-        import pycuda.driver
-        pycuda.driver.init()
-        self.device = pycuda.driver.Device(device_num)
-        self.context = self.device.make_context(flags=pycuda.driver.ctx_flags.SCHED_BLOCKING_SYNC)
-        import atexit
-        atexit.register(clean_cuda,self.context)
+            raise RuntimeError("Install CuPy to use CUDA processing")
+        import cupy as cp
+        # Set up the CUDA device using CuPy
+        self.device = cp.cuda.Device(device_num)
+        self.device.use()
+#        self.context = cp.cuda.runtime.ctxGetCurrent()
+
+#        import atexit
+#        atexit.register(clean_cuda,self.context)
 
 class CPUScheme(Scheme):
     def __init__(self, num_threads=1):
@@ -212,10 +214,10 @@ def schemed(prefix):
 
                     return schemed_fn(*args, **kwds)
 
-                err = """Failed to find implementation of (%s)
-                      for %s scheme." % (str(fn), current_prefix())"""
+                err = (f"Failed to find implementation of {func.__name__} "
+                       f"for {current_prefix()} scheme")
                 for emsg in exc_errors:
-                    err += print(emsg)
+                    err += " : " + repr(emsg)
                 raise RuntimeError(err)
         return _scheming_function
 
@@ -318,7 +320,10 @@ def verify_processing_options(opt, parser):
     """
     scheme_types = scheme_prefix.values()
     if opt.processing_scheme.split(':')[0] not in scheme_types:
-        parser.error("(%s) is not a valid scheme type.")
+        parser.error(
+            "%s is not a valid scheme type." %
+            opt.processing_scheme.split(':')[0]
+        )
 
 class ChooseBySchemeDict(dict):
     """ This class represents a dictionary whose purpose is to chose objects
