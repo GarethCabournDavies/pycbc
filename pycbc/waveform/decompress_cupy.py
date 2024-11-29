@@ -1,4 +1,5 @@
-# Copyright (C) 2016  Josh Willis
+# Copyright (C) 2024  The PyCBC team
+
 # This program is free software; you can redistribute it and/or modify it
 # under the terms of the GNU General Public License as published by the
 # Free Software Foundation; either version 3 of the License, or (at your
@@ -14,13 +15,6 @@
 # 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 
-#
-# =============================================================================
-#
-#                                   Preamble
-#
-# =============================================================================
-#
 import cupy as cp
 import numpy as np
 from mako.template import Template
