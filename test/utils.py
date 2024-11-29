@@ -67,7 +67,7 @@ import pycbc
 import optparse
 from sys import exit as _exit
 from optparse import OptionParser
-from pycbc.scheme import CPUScheme, CUDAScheme
+from pycbc.scheme import CPUScheme, CUDAScheme, CUPYScheme
 from numpy import float32, float64, complex64, complex128
 from pycbc.types import Array
 
@@ -82,7 +82,7 @@ def _check_scheme_all(option, opt_str, scheme, parser):
 def parse_args_all_schemes(feature_str):
     _parser = OptionParser()
     _parser.add_option('--scheme','-s', action='callback', type = 'choice',
-                       choices = ('cpu','cuda'),
+                       choices = ('cpu','cuda', 'cupy'),
                        default = 'cpu', dest = 'scheme', callback = _check_scheme_all,
                        help = 'specifies processing scheme, can be cpu [default], cuda')
     _parser.add_option('--device-num','-d', action='store', type = 'int',
@@ -97,10 +97,12 @@ def parse_args_all_schemes(feature_str):
 
     if _scheme == 'cpu':
         _context = CPUScheme()
+    if _scheme == 'cupy':
+        _context = CUPYScheme()
     if _scheme == 'cuda':
         _context = CUDAScheme(device_num=_options['devicenum'])
 
-    _scheme_dict = { 'cpu': 'CPU', 'cuda': 'CUDA'}
+    _scheme_dict = { 'cpu': 'CPU', 'cuda': 'CUDA', 'cupy': 'CuPy'}
 
     print(72*'=')
     print("Running {0} unit tests for {1}:".format(_scheme_dict[_scheme],feature_str))
