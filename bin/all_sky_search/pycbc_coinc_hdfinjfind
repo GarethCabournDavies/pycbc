@@ -73,6 +73,12 @@ parser.add_argument('--optimal-snr-column', nargs='+',
 parser.add_argument('--redshift-column', default=None,
                     help='Name of sim_inspiral column containing redshift. '
                     'Optional')
+parser.add_argument(
+    "--missed-ifar",
+    type=float,
+    help="If given, any events with IFAR below this value will be "
+         "considered 'missed'. Years"
+)
 parser.add_argument('--output-file', required=True)
 args = parser.parse_args()
 
@@ -119,9 +125,9 @@ for trigger_file, injection_file in zip(args.trigger_files,
          trig_dict[ifo] = f['foreground/%s/trigger_id' % ifo][:]
     time = numpy.array([events.mean_if_greater_than_zero(vals)[0]
                                                for vals in zip(*ifo_times)])
-    # We will discard injections which cannot be associated with a
-    # coincident event, thus combine segments over all combinations
-    # of coincident detectors to determine which times to keep
+    # We will discard injections which cannot be associated with an
+    # event, thus combine segments where any detector is active
+    # to determine which times to keep
     any_seg = segments.segmentlist([])
     for key in f['segments']:
         if key == 'foreground':
@@ -155,7 +161,37 @@ for trigger_file, injection_file in zip(args.trigger_files,
     found = numpy.where((right-left) == 1)[0]
     missed = numpy.where((right-left) == 0)[0]
     ambiguous = numpy.where((right-left) > 1)[0]
-    missed = numpy.concatenate([missed, ambiguous])
+    if args.missed_ifar is not None:
+        # Find the 'found' events which are below the ifar threshold
+        ifar_missed = ifar_exc[time_sorting][found] < args.missed_ifar
+        # Remove these from the found set
+        ifar_found = numpy.logical_not(ifar_missed)
+        found = found[ifar_found]
+        missed = numpy.concatenate((missed, numpy.where(ifar_missed)[0]))
+
+        # For ambiguous events, we need to loop through the events;
+        amb_found = numpy.zeros(len(ambiguous), dtype=bool)
+        amb_missed = numpy.zeros(len(ambiguous), dtype=bool)
+        amb_still = numpy.zeros(len(ambiguous), dtype=bool)
+        for i, amb in enumerate(ambiguous):
+            this_amb = ifar_exc[time_sorting][left[amb]:right[amb]]
+            if this_amb.max() < args.missed_ifar:
+                # All events below the threshold; missed
+                amb_missed[i] = True
+            elif sum(this_amb > missed_ifar) > 1:
+                # More than one above threshold ; still ambiguous
+                amb_still[i] = True
+            else:
+                # There is only one of the ambiguous events above threshold;
+                # we move it to found
+                amb_found[i] = True
+        ambiguous = ambiguous[amb_still]
+        found = numpy.concatenate((found, ambiguous[amb_found]))
+        missed = numpy.concatenate((missed, ambiguous[amb_missed]))
+
+        found = numpy.concatenate((found, ambiguous))
+    else:
+        missed = numpy.concatenate([missed, ambiguous])
     logging.info('Found: %s, Missed: %s Ambiguous: %s'
                  % (len(found), len(missed), len(ambiguous)))
 
