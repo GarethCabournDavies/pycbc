@@ -67,7 +67,7 @@ class InterpolatingConfigParser(DeepCopyableConfigParser):
         deleteTuples=None,
         skip_extended=False,
         sanitize_newline=True,
-        access_token=None
+        access_tokens=None
     ):
         """
          Initialize an InterpolatingConfigParser. This reads the input configuration
@@ -126,7 +126,7 @@ class InterpolatingConfigParser(DeepCopyableConfigParser):
         # Populate shared options from the [sharedoptions] section
         self.populate_shared_sections()
 
-        self.access_token = access_token
+        self.access_tokens = access_tokens
 
         # Do deletes from command line
         for delete in deleteTuples:
@@ -228,20 +228,23 @@ class InterpolatingConfigParser(DeepCopyableConfigParser):
         else:
             deletes = None
 
-        if opts.gitlab_access_token is not None:
-            #  Unpack the gitlab access token definition
-            token_definition = opts.gitlab_access_token.split(':')
-            access_token = {
-                "gitlab_instance": ':'.join(token_definition[:2]), # Assume that the gitlab instance has a : in it, i.e. https://
-                "project_name": token_definition[2],
-                "token_filepath": token_definition[3],
-            }
-            if len(token_definition) > 4:
-                access_token["tag"] = token_definition[4]
+        if opts.gitlab_access_tokens is not None:
+            access_tokens = []
+            #  Unpack the gitlab access token definitions
+            for gitlab_access_token in opts.gitlab_access_tokens
+                token_definition = gitlab_access_token.split(':')
+                access_token = {
+                    "gitlab_instance": ':'.join(token_definition[:2]), # Assume that the gitlab instance has a : in it, i.e. https://
+                    "project_name": token_definition[2],
+                    "token_filepath": token_definition[3],
+                }
+                if len(token_definition) > 4:
+                    access_token["tag"] = token_definition[4]
+                access_tokens.append(access_token)
         else:
-            access_token = None
+            access_tokens = None
 
-        return cls(opts.config_files, overrides, deleteTuples=deletes, access_token=access_token)
+        return cls(opts.config_files, overrides, deleteTuples=deletes, access_tokens=access_tokens)
 
     def read_ini_file(self, fpath):
         """

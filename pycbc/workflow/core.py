@@ -693,7 +693,10 @@ class Workflow(pegasus_workflow.Workflow):
 
         if args.cache_file is not None:
             # Resolve any cache files locations
-            cache_file = resolve_url(args.cache_file)
+            cache_file = resolve_url(
+                args.cache_file,
+                gitlab_access_token=self.cp.access_token
+            )
         else:
             cache_file = None
 
