@@ -2,6 +2,8 @@
 """ Calculate total FAR based on statistic ranking for coincidences in times
 with more than one ifo combination available. Cluster to keep foreground
 coincs with the highest stat value.
+
+TEST CHANGE
 """
 import numpy as np, argparse, logging, pycbc, pycbc.events, pycbc.io
 import igwn_segments as segments
