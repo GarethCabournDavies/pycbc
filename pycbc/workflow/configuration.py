@@ -155,7 +155,7 @@ def resolve_url(
         if gitlab_access_token is not None:
             # We have defined the access tokens, and one seems to be valid for this
             # url.
-            # access_token will be a dict with 3 or 4 values:
+            # gitlab_access_token will be a dict with 3 or 4 values:
             # 'token_filepath', 'gitlab_instance', and 'project_name'
             # It may contain 'tag' if given, if not, it will be assumed to be 'main'
 
