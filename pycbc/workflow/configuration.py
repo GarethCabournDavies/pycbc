@@ -93,6 +93,7 @@ def resolve_url(
     copy_to_cwd=True,
     hash_max_chunks=None,
     hash_chunk_size=None,
+    gitlab_access_tokens=None,
 ):
     """Resolves a URL to a local file, and returns the path to that file.
 
@@ -136,24 +137,79 @@ def resolve_url(
                 shutil.copy(u.path, filename)
 
     elif u.scheme == "http" or u.scheme == "https":
-        # Would like to move ciecplib import to top using import_optional, but
-        # it needs to be available when documentation runs in the CI, and I
-        # can't get it to install in the GitHub CI
-        import ciecplib
-        # Make the scitokens logger a little quieter
-        # (it is called through ciecpclib)
-        curr_level = logging.getLogger().level
-        logging.getLogger('scitokens').setLevel(curr_level + 10)
-        with ciecplib.Session() as s:
-            if u.netloc in ("git.ligo.org", "code.pycbc.phy.syr.edu"):
-                # authenticate with git.ligo.org using callback
-                s.get("https://git.ligo.org/users/auth/shibboleth/callback")
-            r = s.get(url, allow_redirects=True)
-            r.raise_for_status()
 
-        output_fp = open(filename, "wb")
-        output_fp.write(r.content)
-        output_fp.close()
+        gitlab_access_token = None
+        if gitlab_access_tokens is not None:
+            # access token for gitlab is defined, so we need to use the correct
+            # token
+            import gitlab
+
+            # work out which access token is wanted
+            
+            for at in gitlab_access_tokens:
+                if at['gitlab_instance'] in url:
+                    # This is the token we want to use
+                    gitlab_access_token = at
+                    break
+
+        if gitlab_access_token is not None:
+            # We have defined the access tokens, and one seems to be valid for this
+            # url.
+            # gitlab_access_token will be a dict with 3 or 4 values:
+            # 'token_filepath', 'gitlab_instance', and 'project_name'
+            # It may contain 'tag' if given, if not, it will be assumed to be 'main'
+
+            # This is a file which just contains the token
+            with open(gitlab_access_token['token_filepath']) as ftoken:
+                token = ftoken.read().rstrip()
+
+            #  Set up the gitlab instance
+            gl = gitlab.Gitlab(
+                gitlab_access_token['gitlab_instance'],
+                private_token=token
+            )
+
+            # The project comes from the project name. This should have the namespace and
+            # repo name included
+            project = gl.projects.get(gitlab_access_token['project_name'])
+
+            # Get the git tag, if given
+            tag = gitlab_access_token.get('tag', 'main')
+
+            # Here we assume that the path to the file within the repo is
+            # given by the url following the git tag. I *think* this is safe
+            path_to_file = url.split(tag)[-1].rstrip().lstrip('/')
+
+            # Download and write to file
+            with open(filename, 'wb') as dlfile:
+                project.files.raw(
+                    file_path=path_to_file,
+                    ref=tag,
+                    streamed=True,
+                    action=dlfile.write
+                )
+        else:
+            # Fall back to ciecplib
+            # Would like to move ciecplib import to top using import_optional, but
+            # it needs to be available when documentation runs in the CI, and I
+            # can't get it to install in the GitHub CI
+            import ciecplib
+            # Make the scitokens logger a little quieter
+            # (it is called through ciecpclib)
+            curr_level = logging.getLogger().level
+            logging.getLogger('scitokens').setLevel(curr_level + 10)
+            with ciecplib.Session() as s:
+                if u.netloc in ("git.ligo.org", "code.pycbc.phy.syr.edu"):
+                    # authenticate with git.ligo.org using callback
+                    s.get("https://git.ligo.org/users/auth/shibboleth/callback")
+                r = s.get(url, allow_redirects=True)
+                r.raise_for_status()
+
+            output_fp = open(filename, "wb")
+            output_fp.write(r.content)
+            output_fp.close()
+
+        return filename
 
     elif u.scheme == "osdf":
         # OSDF will require a scitoken to be present and stashcp to be
@@ -274,6 +330,18 @@ def add_workflow_command_line_group(parser):
         "which deletes a specific option from a given "
         "section.",
     )
+    workflowArgs.add_argument(
+        "--gitlab-access-tokens",
+        nargs='*',
+        metavar="GITLAB_INSTANCE:PROJECT_NAME:TOKEN_FILE[:TAG]",
+        help="Provide information about a personal access token to a gitlab "
+        "instance. Will be used if the scheme is http or https and the "
+        "gitlab instance and project name are both in the url. This should "
+        "be in the form 'GITLAB_INSTANCE:PROJECT_NAME:TOKEN_FILE[:TAG]', "
+        "for example "
+        "'https://git.ligo.org:pycbc/offline-analysis:/path/to/token_file.txt:v2.3.10.1'. "
+        "The TAG is optional, and if not given, it will be assumed to be 'main'."
+    )
 
 
 class WorkflowConfigParser(InterpolatingConfigParser):
@@ -289,6 +357,7 @@ class WorkflowConfigParser(InterpolatingConfigParser):
         parsedFilePath=None,
         deleteTuples=None,
         copy_to_cwd=False,
+        access_tokens=None,
     ):
         """
         Initialize an WorkflowConfigParser. This reads the input configuration
@@ -322,7 +391,11 @@ class WorkflowConfigParser(InterpolatingConfigParser):
         """
         if configFiles is not None:
             configFiles = [
-                resolve_url(cFile, copy_to_cwd=copy_to_cwd)
+                resolve_url(
+                    cFile,
+                    copy_to_cwd=copy_to_cwd,
+                    gitlab_access_tokens=access_tokens
+                )
                 for cFile in configFiles
             ]
 
@@ -333,6 +406,7 @@ class WorkflowConfigParser(InterpolatingConfigParser):
             parsedFilePath,
             deleteTuples,
             skip_extended=True,
+            access_tokens=access_tokens
         )
         # expand executable which statements
         self.perform_exe_expansion()
