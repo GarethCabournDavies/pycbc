@@ -41,6 +41,10 @@ jobs:
           DOCKER_PASSWORD: "${{secrets.DOCKERHUB_PASSWORD}}"
           DOCKER_USERNAME: "${{secrets.DOCKERHUB_USERNAME}}"
         # Uncomment the run below to enable pushing to DockerHub. Ensure secrets are set.
+<<<<<<< HEAD
+=======
+        # name: "Pushing docker image"
+>>>>>>> 2ce020782 (make the workflow valid again)
         # run: "bash -e docker/etc/push_image.sh"
         run: |
           echo "Docker push is disabled in CI. To enable, uncomment the real push command in the workflow and ensure DOCKERHUB secrets are configured."
