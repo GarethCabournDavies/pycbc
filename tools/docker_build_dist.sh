@@ -112,10 +112,10 @@ EOF
       # remove lalsuite source and deploy on cvmfs
       rm -rf ${VENV_PATH}/src/lalsuite
       export RSYNC_OPTIONS VENV_PATH ENV_OS SOURCE_TAG
-      if ! bash /pycbc/tools/venv_transfer_commands.sh; then
-        ssh cvmfs.pycbc@cvmfs-software.ligo.caltech.edu "sudo -u repo.software cvmfs_server abort -f"
-        exit 1
-      fi
+      # if ! bash /pycbc/tools/venv_transfer_commands.sh; then
+      #   ssh cvmfs.pycbc@cvmfs-software.ligo.caltech.edu "sudo -u repo.software cvmfs_server abort -f"
+      #   exit 1
+      # fi
     fi
     echo -e "\\n>> [`date`] virtualenv deployment complete"
   fi
