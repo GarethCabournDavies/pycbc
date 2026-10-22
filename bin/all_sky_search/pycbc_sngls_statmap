@@ -17,30 +17,6 @@ import pycbc.pnutils
 from pycbc.events import significance, veto
 
 
-class fw:
-    def __init__(self, name):
-        self.f = pycbc.io.HFile(name, "w")
-        self.attrs = self.f.attrs
-
-    def __setitem__(self, name, data):
-        # Make a new item if isn't in the hdf file
-        if name not in self.f:
-            self.f.create_dataset(
-                name,
-                data=data,
-                compression="gzip",
-                compression_opts=9,
-                shuffle=True,
-                maxshape=data.shape,
-            )
-        # Else reassign values
-        else:
-            self.f[name][:] = data
-
-    def __getitem__(self, *args):
-        return self.f.__getitem__(*args)
-
-
 parser = argparse.ArgumentParser()
 # General required options
 pycbc.add_common_pycbc_options(parser)
@@ -148,7 +124,7 @@ logging.info("%s triggers remain" % len(all_trigs.stat))
 fg_time = float(all_trigs.attrs["foreground_time"])
 
 logging.info("Dumping foreground triggers")
-f = fw(args.output_file)
+f = pycbc.io.StatmapFileWriter(args.output_file)
 f.attrs["num_of_ifos"] = 1
 f.attrs["ifos"] = ifo
 

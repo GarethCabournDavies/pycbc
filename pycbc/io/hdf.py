@@ -76,6 +76,36 @@ class HGroup(h5py.Group):
         return HGroup(parent_obj.id)
 
 
+class StatmapFileWriter:
+    """Write compressed statmap datasets, updating existing arrays in place.
+
+    Attributes are available through ``attrs`` and the underlying HFile through
+    ``f``. Callers are responsible for closing ``f`` when writing is complete.
+    """
+
+    def __init__(self, name):
+        self.f = HFile(name, "w")
+        self.attrs = self.f.attrs
+
+    def __setitem__(self, name, data):
+        # Create compressed datasets on first assignment.
+        if name not in self.f:
+            self.f.create_dataset(
+                name,
+                data=data,
+                compression="gzip",
+                compression_opts=9,
+                shuffle=True,
+                maxshape=data.shape,
+            )
+        # Preserve existing dataset metadata when updating values.
+        else:
+            self.f[name][:] = data
+
+    def __getitem__(self, *args):
+        return self.f.__getitem__(*args)
+
+
 class HFile(HGroup, h5py.File):
     """Low level extensions to the capabilities of reading an hdf5 File"""
 

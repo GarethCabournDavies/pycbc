@@ -5,12 +5,40 @@ import unittest
 import numpy as np
 from utils import parse_args_cpu_only, simple_exit
 
-from pycbc.io.hdf import HFile
+from pycbc.io.hdf import HFile, StatmapFileWriter
 
 parse_args_cpu_only("io.hdf")
 
 
 class TestIOHDF(unittest.TestCase):
+    def test_statmap_file_writer(self):
+        """Statmap assignments preserve compressed datasets and file metadata."""
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "statmap.hdf")
+            writer = StatmapFileWriter(path)
+            try:
+                writer.attrs["ifos"] = "H1 L1"
+                writer["foreground/stat"] = np.arange(3, dtype=np.float64)
+                dataset = writer["foreground/stat"]
+                dataset.attrs["description"] = "ranking statistic"
+                writer["foreground/stat"] = np.arange(3, dtype=np.float64) + 2
+                writer["background/stat"] = np.array([], dtype=np.float64)
+                self.assertEqual(dataset.attrs["description"], "ranking statistic")
+                self.assertEqual(dataset.compression, "gzip")
+                self.assertEqual(dataset.compression_opts, 9)
+                self.assertTrue(dataset.shuffle)
+                self.assertEqual(dataset.maxshape, (3,))
+                np.testing.assert_array_equal(dataset[:], np.arange(3) + 2)
+            finally:
+                writer.f.close()
+
+            with HFile(path, "r") as result:
+                self.assertEqual(result.attrs["ifos"], "H1 L1")
+                np.testing.assert_array_equal(
+                    result["foreground/stat"][:], np.arange(3) + 2
+                )
+                self.assertEqual(result["background/stat"].shape, (0,))
+
     def test_hfile_select_basic_and_premask(self):
         """Test HFile.select basic selection, premask as indices/boolean."""
         with tempfile.TemporaryDirectory() as td:
