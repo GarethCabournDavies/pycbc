@@ -2,9 +2,14 @@
 
 import numpy as np
 import pytest
-from scipy.integrate import trapezoid
 
 from pycbc.events import trigger_fits as tf
+
+# numpy renamed trapz to trapezoid in 2.0 and removed trapz in 2.x
+try:
+    from numpy import trapezoid
+except ImportError:  # numpy < 2.0
+    from numpy import trapz as trapezoid
 
 THRESH = 5.0
 ALPHA = {"exponential": 2.0, "rayleigh": 0.5, "power": 4.0}
